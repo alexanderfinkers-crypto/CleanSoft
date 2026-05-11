@@ -1160,8 +1160,22 @@ function pinConfirm(){
     try{sessionStorage.setItem('gp_user',JSON.stringify(currentUser));}catch(e){}
     _loginRole=null;_pinEntry='';
     S.view='dashboard';
-    render();
-    setTimeout(()=>toast('Welkom, '+currentUser.name+'! 👋'),200);
+    // Auto-sync bij inloggen: haal altijd data op uit Firebase als beschikbaar
+    const _doLogin=()=>{
+      render();
+      setTimeout(()=>toast('Welkom, '+currentUser.name+'! 👋'),200);
+      if(window._fb){
+        // Worker: altijd verbinden; Owner: verbinden als syncEnabled
+        if(currentUser.role==='worker'||settings.syncEnabled){
+          settings.syncEnabled=true;
+          saveLocalOnly();
+          startFirestoreListener();
+          pullFromCloud(true).then(ok=>{if(ok){render();toast('🔄 Data gesynchroniseerd!');}});
+        }
+      }
+    };
+    if(window._fb){_doLogin();}
+    else{window.addEventListener('fb-ready',_doLogin,{once:true});render();setTimeout(()=>toast('Welkom, '+currentUser.name+'! 👋'),200);}
   }else{
     _pinEntry='';render();
     const e=document.getElementById('pin-error');if(e){e.textContent='Verkeerde PIN, probeer opnieuw';setTimeout(()=>{if(e)e.textContent='';},2000);}
