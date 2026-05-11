@@ -1129,7 +1129,7 @@ function renderLogin(){
     </div>`;
   const dots=Array.from({length:4},(_,i)=>`<div style="width:16px;height:16px;border-radius:50%;background:${i<_pinEntry.length?'var(--primary)':'var(--border)'};transition:background .15s"></div>`).join('');
   const keys=[1,2,3,4,5,6,7,8,9,null,0,'⌫'];
-  const pad=keys.map(k=>k===null?`<div></div>`:`<button onclick="pinKey('${k}')" style="padding:18px 0;border:none;border-radius:14px;background:var(--bg);font-size:20px;font-weight:700;cursor:pointer;color:var(--text);transition:background .1s">${k}</button>`).join('');
+  const pad=keys.map(k=>k===null?`<div></div>`:`<button onclick="pinKey('${k}')" style="padding:18px 0;border:none;border-radius:14px;background:var(--bg);font-size:20px;font-weight:700;cursor:pointer;color:var(--text);transition:background .1s;touch-action:manipulation;-webkit-tap-highlight-color:transparent;user-select:none">${k}</button>`).join('');
   return`
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:65vh;padding:24px;gap:0">
       <div style="text-align:center;margin-bottom:28px">
@@ -1141,8 +1141,8 @@ function renderLogin(){
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">${pad}</div>
         <div id="pin-error" style="color:var(--danger);font-size:12px;text-align:center;margin-bottom:8px;min-height:18px"></div>
         <div style="display:flex;gap:8px">
-          <button onclick="pinCancel()" style="flex:1;padding:14px 0;border:none;border-radius:12px;background:var(--bg);font-size:13px;font-weight:700;cursor:pointer;color:var(--text-muted)">← Terug</button>
-          <button onclick="pinConfirm()" style="flex:1;padding:14px 0;border:none;border-radius:12px;background:var(--primary);font-size:13px;font-weight:700;cursor:pointer;color:#fff">Inloggen</button>
+          <button onclick="pinCancel()" style="flex:1;padding:14px 0;border:none;border-radius:12px;background:var(--bg);font-size:13px;font-weight:700;cursor:pointer;color:var(--text-muted);touch-action:manipulation;user-select:none">← Terug</button>
+          <button onclick="pinConfirm()" style="flex:1;padding:14px 0;border:none;border-radius:12px;background:var(--primary);font-size:13px;font-weight:700;cursor:pointer;color:#fff;touch-action:manipulation;user-select:none">Inloggen</button>
         </div>
       </div>
     </div>`;
