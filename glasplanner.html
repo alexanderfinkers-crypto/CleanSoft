@@ -1513,8 +1513,8 @@ function renderCustomers(rems){
   <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
     <div class="search-wrap" style="flex:1;margin-bottom:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input type="text" placeholder="Klant zoeken..." value="${esc(S.custSearch)}" oninput="custSearch(this.value)"></div>
-    <button onclick="setCustView('list')" style="padding:8px 12px;border-radius:10px;border:2px solid ${S.custView==='list'?'var(--primary)':'var(--border)'};background:${S.custView==='list'?'var(--primary)':'#fff'};color:${S.custView==='list'?'#fff':'var(--text-muted)'};font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0">☰ Lijst</button>
-    <button onclick="setCustView('map')" style="padding:8px 12px;border-radius:10px;border:2px solid ${S.custView==='map'?'var(--primary)':'var(--border)'};background:${S.custView==='map'?'var(--primary)':'#fff'};color:${S.custView==='map'?'#fff':'var(--text-muted)'};font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0">🗺️ Kaart</button>
+    <button onclick="setCustView('list')" title="Lijstweergave" style="padding:8px 12px;border-radius:10px;border:2px solid ${S.custView==='list'?'var(--primary)':'var(--border)'};background:${S.custView==='list'?'var(--primary)':'#fff'};color:${S.custView==='list'?'#fff':'var(--text-muted)'};font-size:16px;cursor:pointer;flex-shrink:0;touch-action:manipulation">☰</button>
+    <button onclick="setCustView('map')" title="Kaartweergave" style="padding:8px 12px;border-radius:10px;border:2px solid ${S.custView==='map'?'var(--primary)':'var(--border)'};background:${S.custView==='map'?'var(--primary)':'#fff'};color:${S.custView==='map'?'#fff':'var(--text-muted)'};font-size:16px;cursor:pointer;flex-shrink:0;touch-action:manipulation">🗺️</button>
   </div>`;
 
   // Map view
@@ -1528,7 +1528,7 @@ function renderCustomers(rems){
       <button onclick="setCustRegion('')" style="padding:3px 10px;border-radius:20px;border:2px solid ${!S.custRegion?'var(--primary)':'var(--border)'};background:${!S.custRegion?'var(--primary)':'#fff'};color:${!S.custRegion?'#fff':'var(--text-muted)'};font-size:11px;font-weight:700;cursor:pointer">Alle</button>
       ${legend}
     </div>
-    <div id="cust-map" style="height:420px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:14px"></div>
+    <div id="cust-map" style="height:calc(100dvh - 220px);min-height:320px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow);margin-bottom:14px"></div>
     <button class="btn btn-primary btn-block" onclick="nav('editcustomer',null)">+ Nieuwe klant toevoegen</button>`;
     return h;
   }
@@ -1670,20 +1670,23 @@ function renderCustDetail(){
 
 function renderCustForm(){
   const c=S.custId?getCust(S.custId):null;
+  // Pre-fill from lead intake if available
+  const pre=(typeof S.preCustomer==='object'&&S.preCustomer!==null)?S.preCustomer:null;
   return`
     <button class="back-btn" onclick="${c?`nav('customer','${c.id}')`:`nav('customers')`}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>${c?'Klant':'Klanten'}</button>
     <div class="card">
+      ${pre?`<div style="background:var(--purple-light);border:1.5px solid var(--purple);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;font-weight:700;color:var(--purple)">📩 Ingevuld vanuit lead — controleer en sla op</div>`:''}
       ${'contacts' in navigator?`<button class="btn btn-outline btn-block" style="margin-bottom:14px;border-color:var(--teal);color:var(--teal)" onclick="importContact()">📱 Importeer uit contacten</button>`:''}
-      <div class="form-group"><label class="form-label">Naam *</label><input class="form-control" id="cf-name" type="text" placeholder="Bijv. Familie Jansen" value="${esc(c?.name||'')}"></div>
-      <div class="form-group"><label class="form-label">Adres (incl. postcode)</label><input class="form-control" id="cf-addr" type="text" placeholder="Straat 12, 1234 AB Stad" value="${esc(c?.address||'')}" oninput="checkDupAddr(this.value,'${c?.id||''}')">
+      <div class="form-group"><label class="form-label">Naam *</label><input class="form-control" id="cf-name" type="text" placeholder="Bijv. Familie Jansen" value="${esc(c?.name||pre?.name||'')}"></div>
+      <div class="form-group"><label class="form-label">Adres (incl. postcode)</label><input class="form-control" id="cf-addr" type="text" placeholder="Straat 12, 1234 AB Stad" value="${esc(c?.address||pre?.address||'')}" oninput="checkDupAddr(this.value,'${c?.id||''}')">
         <div id="addr-dup-warn" style="display:none;margin-top:6px;padding:9px 12px;background:var(--warning-light);border:1.5px solid var(--warning);border-radius:8px;font-size:12px;font-weight:700;color:var(--warning);cursor:pointer"></div>
       </div>
-      <div class="form-group"><label class="form-label">Telefoon</label><input class="form-control" id="cf-phone" type="tel" placeholder="06-12345678" value="${esc(c?.phone||'')}"></div>
-      ${isOwner()?`<div class="form-group"><label class="form-label">Prijs per klus (€)</label><input class="form-control" id="cf-price" type="number" placeholder="75" value="${c?.price||''}" min="0" step="1"></div>`:''}
+      <div class="form-group"><label class="form-label">Telefoon</label><input class="form-control" id="cf-phone" type="tel" placeholder="06-12345678" value="${esc(c?.phone||pre?.phone||'')}"></div>
+      ${isOwner()?`<div class="form-group"><label class="form-label">Prijs per klus (€)</label><input class="form-control" id="cf-price" type="number" placeholder="75" value="${c?.price||pre?.price||''}" min="0" step="1"></div>`:''}
       <div class="form-group"><label class="form-label">Herhaalfrequentie</label>
         <select class="form-control" id="cf-freq">${Object.entries(FREQS).map(([k,v])=>`<option value="${k}"${(c?.frequency||'none')===k?' selected':''}>${v}</option>`).join('')}</select>
       </div>
-      <div class="form-group"><label class="form-label">Notities</label><textarea class="form-control" id="cf-notes" rows="3" placeholder="Bijzonderheden, toegang, etc.">${esc(c?.notes||'')}</textarea></div>
+      <div class="form-group"><label class="form-label">Notities</label><textarea class="form-control" id="cf-notes" rows="3" placeholder="Bijzonderheden, toegang, etc.">${esc(c?.notes||pre?.notes||'')}</textarea></div>
       <button class="btn btn-primary btn-lg" onclick="saveCust()">${c?'✓ Opslaan':'+ Klant toevoegen'}</button>
       ${c&&isOwner()?`<div class="divider"></div><button class="btn btn-danger btn-block" onclick="delCust('${c.id}')">🗑️ Klant verwijderen</button>`:''}
     </div>`;
@@ -1856,6 +1859,7 @@ function renderAI(pending=[]){
   if(S.aiTab==='availability')return renderAIAvailability();
   if(S.aiTab==='insights'){if(!isOwner()){S.aiTab='hub';}else return renderAIInsights();}
   if(S.aiTab==='price'){if(!isOwner()){S.aiTab='hub';}else return renderAIPriceTool();}
+  if(S.aiTab==='lead')return renderAILead();
   // Hub
   const intel=aiIntelligence();
   const lvl=intel<40?'Beginner':intel<65?'Lerende AI':intel<82?'Gevorderd':'Expert AI';
@@ -1888,7 +1892,123 @@ function renderAI(pending=[]){
       ${isOwner()?`<div class="ai-card ai-card-insights" onclick="nav('ai','insights')"><div class="ai-card-icon">📊</div><div class="ai-card-title">Inzichten</div><div class="ai-card-desc">Omzet, trends &amp; prestaties</div></div>`:''}
       ${isOwner()?`<div class="ai-card ai-card-settings" onclick="nav('settings')"><div class="ai-card-icon">⚙️</div><div class="ai-card-title">Instellingen</div><div class="ai-card-desc">Tarief, thuisbasis, namen</div></div>`:''}
       <div class="ai-card" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:2px solid #86efac" onclick="openDakCalculator()"><div class="ai-card-icon">📐</div><div class="ai-card-title">Dak m² calculator</div><div class="ai-card-desc">Oppervlakte incl. hellingcorrectie</div></div>
+      <div class="ai-card" style="background:linear-gradient(135deg,#fdf4ff,#f3e8ff);border:2px solid #d8b4fe;border-top-color:var(--purple)" onclick="nav('ai','lead')"><div class="ai-card-icon">📩</div><div class="ai-card-title">Lead inlezen</div><div class="ai-card-desc">Mail of appje analyseren & klant aanmaken</div></div>
     </div>`;
+}
+
+// ════════════════════════════════════════════════
+//  RENDER: AI LEAD INLEZEN
+// ════════════════════════════════════════════════
+let _leadImages=[];
+let _leadResult=null;
+
+function renderAILead(){
+  const hasKey=!!(settings.claudeApiKey||'').trim();
+  const resHtml=_leadResult?`
+    <div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:12px;padding:14px;margin-bottom:14px">
+      <div style="font-size:13px;font-weight:800;color:var(--success);margin-bottom:10px">✅ AI heeft het bericht uitgelezen</div>
+      ${_leadResult.naam?`<div class="info-row"><span class="ir-lbl">Naam</span><span class="ir-val">${esc(_leadResult.naam)}</span></div>`:''}
+      ${_leadResult.adres?`<div class="info-row"><span class="ir-lbl">Adres</span><span class="ir-val">${esc(_leadResult.adres)}</span></div>`:''}
+      ${_leadResult.telefoon?`<div class="info-row"><span class="ir-lbl">Telefoon</span><span class="ir-val">${esc(_leadResult.telefoon)}</span></div>`:''}
+      ${_leadResult.werk?`<div class="info-row"><span class="ir-lbl">Gevraagd werk</span><span class="ir-val">${esc(_leadResult.werk)}</span></div>`:''}
+      ${_leadResult.prijsMin?`<div class="info-row"><span class="ir-lbl">Geschatte prijs</span><span class="ir-val" style="color:var(--success);font-weight:800">€${_leadResult.prijsMin}${_leadResult.prijsMax&&_leadResult.prijsMax!==_leadResult.prijsMin?' – €'+_leadResult.prijsMax:''}</span></div>`:''}
+      ${_leadResult.notities?`<div class="info-row"><span class="ir-lbl">Notities</span><span class="ir-val">${esc(_leadResult.notities)}</span></div>`:''}
+      <button class="btn btn-primary btn-block" style="margin-top:12px" onclick="leadNaarKlant()">➕ Aanmaken als nieuwe klant</button>
+    </div>`:
+  `<div id="lead-status" style="font-size:12px;color:var(--text-muted);text-align:center;min-height:20px"></div>`;
+
+  return`
+    <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
+    <div class="card">
+      <div style="font-size:16px;font-weight:800;margin-bottom:4px">📩 Lead inlezen</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Plak een mail of WhatsApp-bericht hieronder. Claude leest naam, adres, gevraagd werk en schat de prijs in.</div>
+      ${!hasKey?`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;font-size:12px;color:#92400e;margin-bottom:12px">⚠️ Voeg eerst een Claude API-sleutel toe in Instellingen.</div>`:''}
+      <div class="form-group">
+        <label class="form-label">Bericht (mail / WhatsApp)</label>
+        <textarea id="lead-tekst" class="form-control" rows="6" placeholder="Hallo, ik wil graag een offerte voor het wassen van mijn ramen. Ik woon op Hoofdstraat 12 in Amsterdam..." style="font-size:13px;line-height:1.6"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Foto's meesturen (optioneel)</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="lead-img-preview">
+          ${_leadImages.map((img,i)=>`<div style="position:relative"><img src="${img.b64}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:2px solid var(--border)"><button onclick="leadRemoveImg(${i})" style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button></div>`).join('')}
+          <button onclick="document.getElementById('lead-img-input').click()" style="width:64px;height:64px;border:2px dashed var(--border);border-radius:8px;background:var(--gray-light);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+        </div>
+        <input type="file" id="lead-img-input" accept="image/*" multiple style="display:none" onchange="leadAddImages(this)">
+      </div>
+      ${resHtml}
+      <button class="btn btn-primary btn-block" onclick="analyseerLead()" ${!hasKey?'disabled':''}>🤖 Analyseren met AI</button>
+    </div>`;
+}
+
+function leadAddImages(input){
+  const files=Array.from(input.files);
+  let loaded=0;
+  files.forEach(f=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      _leadImages.push({b64:e.target.result,mime:f.type});
+      loaded++;
+      if(loaded===files.length)render();
+    };
+    reader.readAsDataURL(f);
+  });
+  input.value='';
+}
+
+function leadRemoveImg(i){_leadImages.splice(i,1);render();}
+
+async function analyseerLead(){
+  const tekst=(document.getElementById('lead-tekst')?.value||'').trim();
+  if(!tekst&&!_leadImages.length){toast('⚠️ Voer een bericht in');return;}
+  const key=(settings.claudeApiKey||'').trim();
+  if(!key){toast('⚠️ Geen Claude API-sleutel');return;}
+
+  const statusEl=document.getElementById('lead-status');
+  if(statusEl)statusEl.innerHTML='<span style="color:var(--primary)">⏳ AI analyseert het bericht...</span>';
+
+  const prijsContext=Object.keys(aiModel.prices).length
+    ?'Onze gemiddelde prijzen: '+Object.entries(aiModel.prices).map(([k,v])=>`${k}: €${Math.round(v.reduce((a,b)=>a+b,0)/v.length)}`).join(', ')+'.'
+    :`Uurtarief: €${settings.hourlyRate}/uur.`;
+
+  const sysPrompt=`Je bent een assistent voor een glazenwassbedrijf. Analyseer het klantbericht en extraheer alle relevante informatie. ${prijsContext} Geef altijd antwoord als geldig JSON object met deze velden: naam, adres, telefoon, werk (beschrijving gevraagd werk), prijsMin (getal, laagste schatting in €), prijsMax (getal, hoogste schatting in €), notities. Gebruik null voor onbekende velden.`;
+
+  const content=[];
+  if(tekst)content.push({type:'text',text:'Klantbericht:\n'+tekst});
+  _leadImages.forEach(img=>{
+    content.push({type:'image',source:{type:'base64',media_type:img.mime,data:img.b64.split(',')[1]}});
+  });
+  content.push({type:'text',text:'Geef je analyse als JSON.'});
+
+  try{
+    const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,system:sysPrompt,messages:[{role:'user',content}]})
+    });
+    if(!resp.ok){toast('⚠️ AI fout: '+resp.status);return;}
+    const data=await resp.json();
+    const raw=data.content?.[0]?.text||'';
+    const match=raw.match(/\{[\s\S]*\}/);
+    if(!match){toast('⚠️ AI gaf geen geldig antwoord');return;}
+    _leadResult=JSON.parse(match[0]);
+    render();
+  }catch(e){toast('⚠️ Fout: '+e.message);}
+}
+
+function leadNaarKlant(){
+  if(!_leadResult)return;
+  // Pre-fill nieuwe klant
+  S.preCustomer={
+    name:_leadResult.naam||'',
+    address:_leadResult.adres||'',
+    phone:_leadResult.telefoon||'',
+    price:_leadResult.prijsMin||'',
+    notes:(_leadResult.werk?'Gevraagd: '+_leadResult.werk:'')+((_leadResult.werk&&_leadResult.notities)?'\n':'')+(_leadResult.notities||''),
+  };
+  _leadResult=null;
+  _leadImages=[];
+  nav('editcustomer',null);
+  toast('✅ Klantgegevens ingevuld!');
 }
 
 // ════════════════════════════════════════════════
@@ -2210,7 +2330,7 @@ function renderAIAvailability(){
           }).join('')}
         </div>`).join('')}
     </div>
-    <input type="file" id="rooster-file-input" accept="image/*" capture="environment" style="display:none" onchange="handleRoosterFile(this)">`;
+    <input type="file" id="rooster-file-input" accept="image/*" style="display:none" onchange="handleRoosterFile(this)">`;
 }
 
 // ════════════════════════════════════════════════
@@ -2621,6 +2741,7 @@ function openWhatsApp(jobId){
   const morgen=job.date===addDays(today(),1);
   const tijd=job.time?` om ${job.time}`:'';
   const bedrijf=settings.w1Name||'CleanSoft';
+  const afzender=currentUser?.name||bedrijf;
   // Next visit date for frequency customers
   const freq=c.frequency&&c.frequency!=='none';
   const freqDays=FREQ_DAYS[c.frequency]||0;
@@ -2630,19 +2751,19 @@ function openWhatsApp(jobId){
     msgs:[
       {
         icon:'🔔',title:'Herinnering (dag van tevoren)',
-        text:`Hallo ${naam}! 👋\n\nEven een reminder: morgen ${job.time?'om '+job.time+' ':''}komen wij voor de glazenwasbeurt.\n\nTot morgen! 🪟\n— ${bedrijf}`
+        text:`Hallo ${naam}! 👋\n\nEven een reminder: morgen ${job.time?'om '+job.time+' ':''}komen wij voor de glazenwasbeurt.\n\nTot morgen! 🪟\n— ${afzender}`
       },
       {
         icon:'📅',title:'Afspraakbevestiging',
-        text:`Hallo ${naam}, je afspraak is bevestigd!\n\n📅 ${datum}${tijd}\n🪟 Glazenwassen${(job.work||[]).length>1?' & meer':''}\n\nVragen? Stuur gerust een berichtje. Tot dan!\n— ${bedrijf}`
+        text:`Hallo ${naam}, je afspraak is bevestigd!\n\n📅 ${datum}${tijd}\n🪟 Glazenwassen${(job.work||[]).length>1?' & meer':''}\n\nVragen? Stuur gerust een berichtje. Tot dan!\n— ${afzender}`
       },
       {
         icon:'✅',title:'Klus afgerond',
-        text:`Hallo ${naam}! 😊\n\nJe glazen zijn vandaag gewassen — klaar! ✨🪟\n${volgende?'\nVolgende beurt: '+volgende+'\n':''}\nBedankt voor je vertrouwen!\n— ${bedrijf}`
+        text:`Hallo ${naam}! 😊\n\nJe glazen zijn vandaag gewassen — klaar! ✨🪟\n${volgende?'\nVolgende beurt: '+volgende+'\n':''}\nBedankt voor je vertrouwen in ons!\n— ${afzender}`
       },
       ...(settings.googleReviewUrl?[{
         icon:'⭐',title:'Review uitnodiging',
-        text:`Hallo ${naam}! Bedankt voor je vertrouwen in ${bedrijf}! 🪟\n\nAls je tevreden bent, zou je ons dan een Google Review willen geven? Het helpt enorm:\n👉 ${settings.googleReviewUrl}\n\nAlvast hartelijk dank! 🙏\n— ${bedrijf}`
+        text:`Hallo ${naam}! Bedankt voor je vertrouwen in ons! 🪟\n\nAls je tevreden bent, zou je ons dan een Google Review willen geven? Het helpt enorm:\n👉 ${settings.googleReviewUrl}\n\nAlvast hartelijk dank! 🙏\n— ${afzender}`
       }]:[]),
     ]
   };
@@ -2678,8 +2799,8 @@ function sendReviewWa(custId){
   const c=getCust(custId);if(!c)return;
   const phone=fmtWaPhone(c.phone);if(!phone)return;
   const naam=firstName(c.name);
-  const bedrijf=settings.w1Name||'CleanSoft';
-  const msg=`Hallo ${naam}, bedankt voor je vertrouwen in ${bedrijf}! 🪟\n\nAls je tevreden was, zou je ons dan een Google Review willen geven? Het helpt ons enorm:\n👉 ${settings.googleReviewUrl}\n\nBedankt! 🙏`;
+  const afzender2=currentUser?.name||settings.w1Name||'CleanSoft';
+  const msg=`Hallo ${naam}, bedankt voor je vertrouwen in ons! 🪟\n\nAls je tevreden was, zou je ons dan een Google Review willen geven? Het helpt ons enorm:\n👉 ${settings.googleReviewUrl}\n\nBedankt! 🙏\n— ${afzender2}`;
   closeModal();
   window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(msg),'_blank');
 }
@@ -7025,7 +7146,7 @@ let _installPrompt=null;
 function setupPWA(){
   const icon=`data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='38' fill='%230066bb'/%3E%3Crect x='28' y='44' width='136' height='108' rx='10' stroke='white' stroke-width='7' fill='none'/%3E%3Cline x1='28' y1='74' x2='164' y2='74' stroke='white' stroke-width='7'/%3E%3Ccircle cx='62' cy='113' r='14' fill='%2322c55e'/%3E%3Cpath d='M54 113l6 7 11-12' stroke='white' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E`;
   try{
-    const m={name:'CleanSoft Portal',short_name:'CleanSoft',start_url:'.',display:'standalone',background_color:'#0066bb',theme_color:'#0066bb',lang:'nl',icons:[{src:icon,sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'}]};
+    const m={name:'CleanSoft Portal',short_name:'CleanSoft',start_url:'.',display:'standalone',background_color:'#0066bb',theme_color:'#0066bb',lang:'nl',icons:[{src:icon,sizes:'192x192',type:'image/svg+xml',purpose:'any maskable'}],share_target:{action:'.',method:'GET',params:{title:'title',text:'text',url:'url'}}};
     document.getElementById('pwa-manifest').href=URL.createObjectURL(new Blob([JSON.stringify(m)],{type:'application/json'}));
   }catch(e){}
   if('serviceWorker' in navigator){
@@ -7132,7 +7253,55 @@ loadAll();
 try{const su=JSON.parse(sessionStorage.getItem('gp_user')||'null');if(su&&su.role)currentUser=su;}catch(e){}
 setupPWA();
 initDark();
+
+// ── Web Share Target: afhandelen van gedeelde content (mail/WhatsApp)
+(function handleShareTarget(){
+  const p=new URLSearchParams(location.search);
+  const sharedText=(p.get('text')||'')+(p.get('title')?'\n'+p.get('title'):'')+(p.get('url')?'\n'+p.get('url'):'');
+  if(!sharedText.trim())return;
+  // Wacht tot gebruiker ingelogd is, dan open Lead scherm
+  sessionStorage.setItem('gp_shared',sharedText.trim());
+  // Verwijder params uit URL zodat het niet nogmaals triggert bij refresh
+  history.replaceState({},'',location.pathname);
+})();
+
 render();
+
+// Na render: check of er gedeelde content klaarstaat
+(function checkSharedOnLoad(){
+  const shared=sessionStorage.getItem('gp_shared');
+  if(!shared)return;
+  if(!currentUser){
+    // Wacht tot ingelogd
+    const _orig=window.render;
+    const _check=()=>{
+      if(currentUser){
+        sessionStorage.removeItem('gp_shared');
+        _leadImages=[];
+        _leadResult=null;
+        S.aiTab='lead';
+        nav('ai','lead');
+        setTimeout(()=>{
+          const el=document.getElementById('lead-tekst');
+          if(el){el.value=shared;el.focus();}
+          toast('📩 Gedeeld bericht geladen!');
+        },300);
+      }
+    };
+    document.addEventListener('click',_check,{once:true});
+    return;
+  }
+  sessionStorage.removeItem('gp_shared');
+  _leadImages=[];
+  _leadResult=null;
+  S.aiTab='lead';
+  nav('ai','lead');
+  setTimeout(()=>{
+    const el=document.getElementById('lead-tekst');
+    if(el){el.value=shared;el.focus();}
+    toast('📩 Gedeeld bericht geladen!');
+  },300);
+})();
 loadWeather();
 checkRemindersAndNotify();
 // Pull latest cloud data on startup via Firebase
