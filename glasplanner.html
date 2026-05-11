@@ -494,7 +494,7 @@ let settings={
   hourlyRate:45,maxJobsPerDay:5,dagDoel:250,
   w1Name:'Ik',w2Name:'Collega',
   ownerPin:'1234',workerPin:'0000',
-  syncId:null,syncEnabled:false,lastSync:null,
+  syncId:null,syncEnabled:true,lastSync:null,
   claudeApiKey:'',googleReviewUrl:'',googleClientId:'942694953878-g7erg0uuqc7hjiv8abe4jnvfdn3dm9si.apps.googleusercontent.com',
 };
 let currentUser=null; // {role:'owner'|'worker', name:string}
@@ -6873,6 +6873,7 @@ async function pullFromCloud(silent=false){
 
 function _applyCloudData(d){
   if(!d)return;
+  localStorage.setItem('gp_setup','1');
   customers=d.customers||customers;
   jobs=d.jobs||jobs;
   if(d.availability)availability=d.availability;
@@ -6952,9 +6953,12 @@ document.addEventListener('visibilitychange',()=>{
   if(!document.hidden&&settings.syncEnabled)pullFromCloud(true).then(ok=>{if(ok)render();});
 });
 
-// Start listener zodra Firebase geladen is
+// Start listener zodra Firebase geladen is — altijd aan
 window.addEventListener('fb-ready',()=>{
-  if(settings.syncEnabled)startFirestoreListener();
+  settings.syncEnabled=true;
+  saveLocalOnly();
+  startFirestoreListener();
+  pullFromCloud(true).then(ok=>{if(ok)render();});
 });
 
 // ════════════════════════════════════════════════
