@@ -11,6 +11,22 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
+<script type="module">
+import{initializeApp}from'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import{getFirestore,doc,setDoc,getDoc,onSnapshot,serverTimestamp}from'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+const _fbCfg={
+  apiKey:"AIzaSyBPOtZxxe338kD-XQs3Dr0dUXQDjHzLTkI",
+  authDomain:"cleansoft-1b44a.firebaseapp.com",
+  projectId:"cleansoft-1b44a",
+  storageBucket:"cleansoft-1b44a.firebasestorage.app",
+  messagingSenderId:"148348764731",
+  appId:"1:148348764731:web:558c1921efd08c6c3b921e"
+};
+const _fbApp=initializeApp(_fbCfg);
+const _fbDb=getFirestore(_fbApp);
+window._fb={db:_fbDb,doc,setDoc,getDoc,onSnapshot,serverTimestamp};
+window.dispatchEvent(new Event('fb-ready'));
+</script>
 <title>CleanSoft Portal</title>
 <style>
 :root{
@@ -514,9 +530,9 @@ let _syncDebounce=null;
 function saveRender(){saveAll();render();}
 function saveAll(){
   saveLocalOnly();
-  if(settings.syncEnabled&&settings.syncId){
+  if(settings.syncEnabled){
     clearTimeout(_syncDebounce);
-    _syncDebounce=setTimeout(pushToCloud,2500);
+    _syncDebounce=setTimeout(pushToCloud,2000);
   }
 }
 
@@ -2338,15 +2354,33 @@ function renderSettings(){
       <button class="btn btn-primary btn-lg" onclick="saveSettings()">✓ Instellingen opslaan</button>
       <div class="divider"></div>
       <div class="settings-section">
-        <div class="settings-section-title">📲 Sync met collega (via WhatsApp)</div>
+        <div class="settings-section-title">🔥 Live sync met collega (Firebase)</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.7">
-          Stuur een sync-code via WhatsApp naar je collega. De collega importeert de code en heeft direct alle klanten en klussen.
+          Realtime synchronisatie — wat jij toevoegt ziet je collega direct, en andersom. Geen codes nodig.
         </div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-primary" style="flex:1" onclick="generateSyncCode()">📤 Code aanmaken & delen</button>
-          <button class="btn btn-outline" style="flex:1" onclick="showImportSync()">📥 Code ontvangen</button>
-        </div>
-        ${settings.lastSync?`<div style="font-size:11px;color:var(--text-muted);margin-top:6px">Laatste sync: ${new Date(settings.lastSync).toLocaleString('nl-NL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`:''}
+        ${settings.syncEnabled
+          ?`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+              <span style="font-size:20px">🟢</span>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:800;color:var(--success)">Live sync actief</div>
+                ${settings.lastSync?`<div style="font-size:11px;color:var(--text-muted)">Laatste sync: ${new Date(settings.lastSync).toLocaleString('nl-NL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`:''}
+              </div>
+              <div id="sync-status" style="font-size:11px;font-weight:700"></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <button class="btn btn-outline" style="flex:1" onclick="copySyncCode()">📋 Link voor collega kopiëren</button>
+              <button class="btn btn-danger" style="flex:1" onclick="disableSync()">🔴 Sync uitschakelen</button>
+            </div>`
+          :`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 14px;margin-bottom:12px">
+              <div style="font-size:12px;color:#92400e;line-height:1.6">⚠️ Sync staat <b>uit</b>. Schakel in als eigenaar, daarna kan de collega dezelfde GitHub link openen en is alles direct gesynchroniseerd.</div>
+            </div>
+            <div id="sync-status" style="font-size:11px;font-weight:700;margin-bottom:8px"></div>
+            <button id="sync-create-btn" class="btn btn-primary btn-block" onclick="createSyncRoom()">🔥 Firebase sync inschakelen</button>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Ben je de <b>collega</b>? Klik hier om data op te halen:</div>
+              <button id="sync-join-btn" class="btn btn-outline btn-block" onclick="joinSyncRoom()">🔗 Verbinden als collega</button>
+            </div>`
+        }
       </div>
       <div class="divider"></div>
       <div class="settings-section">
@@ -6769,12 +6803,13 @@ function removeRoosterBlock(worker, date, idx){
 }
 
 // ════════════════════════════════════════════════
-//  CLOUD SYNC (jsonblob.com — gratis, geen account)
+//  CLOUD SYNC — Firebase Firestore (live, realtime)
 // ════════════════════════════════════════════════
-const SYNC_API='https://jsonblob.com/api/jsonBlob';
+let _fbUnsub=null; // onSnapshot unsubscribe handle
+let _fbPushing=false;
+let _fbIgnoreNext=false; // skip our own write bouncing back
 
 function syncPayload(){
-  // Strip PINs — elk apparaat bewaart eigen PINs lokaal
   const {ownerPin,workerPin,syncId,syncEnabled,lastSync,...rest}=settings;
   return{customers,jobs,availability,aiModel,settings:rest,geocodeCache,_ts:Date.now()};
 }
@@ -6784,106 +6819,126 @@ function setSyncStatus(txt,color='var(--text-muted)'){
   const el=syncStatusEl();if(el){el.textContent=txt;el.style.color=color;}
 }
 
+function _fbDoc(){
+  if(!window._fb)return null;
+  return window._fb.doc(window._fb.db,'workspace','main');
+}
+
 async function pushToCloud(){
-  if(!settings.syncId)return;
+  if(!settings.syncEnabled)return;
+  if(!window._fb){setSyncStatus('⚠️ Firebase niet geladen','var(--warning)');return;}
+  if(_fbPushing)return;
+  _fbPushing=true;
   setSyncStatus('☁️ Synchroniseren...','var(--primary)');
   try{
-    const r=await fetch(SYNC_API+'/'+settings.syncId,{
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(syncPayload())
-    });
-    if(r.ok){
-      settings.lastSync=Date.now();
-      saveLocalOnly();
-      setSyncStatus('✅ Gesynchroniseerd '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');
-    }else{setSyncStatus('⚠️ Sync mislukt','var(--danger)');}
-  }catch(e){setSyncStatus('⚠️ Geen verbinding','var(--warning)');}
+    _fbIgnoreNext=true;
+    await window._fb.setDoc(_fbDoc(),syncPayload());
+    settings.lastSync=Date.now();
+    saveLocalOnly();
+    setSyncStatus('✅ Gesynchroniseerd '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');
+  }catch(e){setSyncStatus('⚠️ Sync mislukt: '+e.message,'var(--danger)');_fbIgnoreNext=false;}
+  _fbPushing=false;
 }
 
 async function pullFromCloud(silent=false){
-  if(!settings.syncId)return false;
+  if(!settings.syncEnabled||!window._fb)return false;
   if(!silent)setSyncStatus('☁️ Ophalen...','var(--primary)');
   try{
-    const r=await fetch(SYNC_API+'/'+settings.syncId,{cache:'no-store'});
-    if(!r.ok){if(!silent)setSyncStatus('⚠️ Sync-code niet gevonden','var(--danger)');return false;}
-    const d=await r.json();
+    const snap=await window._fb.getDoc(_fbDoc());
+    if(!snap.exists()){if(!silent)setSyncStatus('⚠️ Nog geen data in cloud','var(--warning)');return false;}
+    const d=snap.data();
     if(!d.customers||!d.jobs)return false;
     if(d._ts&&d._ts<=(settings.lastSync||0))return false;
-    customers=d.customers;
-    jobs=d.jobs;
-    if(d.availability)availability=d.availability;
-    if(d.aiModel)aiModel=d.aiModel;
-    if(d.geocodeCache)geocodeCache=d.geocodeCache;
-    if(d.settings){const {ownerPin,workerPin,...rest}=d.settings;settings={...settings,...rest};}
-    settings.lastSync=d._ts;
-    saveLocalOnly();
+    _applyCloudData(d);
     if(!silent){setSyncStatus('✅ Bijgewerkt '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');render();}
     return true;
   }catch(e){if(!silent)setSyncStatus('⚠️ Geen verbinding','var(--warning)');return false;}
 }
 
+function _applyCloudData(d){
+  if(!d)return;
+  customers=d.customers||customers;
+  jobs=d.jobs||jobs;
+  if(d.availability)availability=d.availability;
+  if(d.aiModel)aiModel=d.aiModel;
+  if(d.geocodeCache)geocodeCache=d.geocodeCache;
+  if(d.settings){const {ownerPin,workerPin,...rest}=d.settings;settings={...settings,...rest};}
+  settings.lastSync=d._ts||Date.now();
+  saveLocalOnly();
+}
+
+function startFirestoreListener(){
+  if(_fbUnsub){_fbUnsub();_fbUnsub=null;}
+  if(!settings.syncEnabled||!window._fb)return;
+  const ref=_fbDoc();
+  if(!ref)return;
+  _fbUnsub=window._fb.onSnapshot(ref,(snap)=>{
+    if(!snap.exists())return;
+    if(_fbIgnoreNext){_fbIgnoreNext=false;return;}
+    const d=snap.data();
+    if(!d.customers||!d.jobs)return;
+    if(d._ts&&d._ts<=(settings.lastSync||0))return;
+    _applyCloudData(d);
+    setSyncStatus('🔄 Live update '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--teal)');
+    render();
+    toast('🔄 Data bijgewerkt door collega');
+  },(err)=>{setSyncStatus('⚠️ Live sync fout','var(--danger)');});
+}
+
 async function createSyncRoom(){
+  if(!window._fb){toast('⚠️ Firebase niet beschikbaar');return;}
   const btn=document.getElementById('sync-create-btn');
-  if(btn){btn.disabled=true;btn.textContent='Aanmaken...';}
+  if(btn){btn.disabled=true;btn.textContent='Verbinden...';}
   try{
-    const r=await fetch(SYNC_API,{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify(syncPayload())
-    });
-    if(r.ok){
-      const loc=r.headers.get('Location')||'';
-      const id=loc.split('/').pop();
-      if(!id)throw new Error('Geen ID ontvangen');
-      settings.syncId=id;settings.syncEnabled=true;settings.lastSync=Date.now();
-      saveLocalOnly();render();
-      toast('☁️ Cloud sync actief! Deel de code met je collega.');
-    }else{toast('⚠️ Aanmaken mislukt ('+r.status+')');}
+    await window._fb.setDoc(_fbDoc(),syncPayload());
+    settings.syncEnabled=true;settings.lastSync=Date.now();
+    saveLocalOnly();
+    startFirestoreListener();
+    render();
+    toast('🔥 Firebase sync actief! Collega kan nu dezelfde link openen.');
   }catch(e){toast('⚠️ Fout: '+e.message);}
-  if(btn){btn.disabled=false;btn.textContent='Sync-room aanmaken';}
+  if(btn){btn.disabled=false;btn.textContent='Sync inschakelen';}
 }
 
 async function joinSyncRoom(){
-  const inp=document.getElementById('sync-join-code');
-  const id=(inp?.value||'').trim();
-  if(!id){toast('⚠️ Voer een sync-code in');return;}
+  if(!window._fb){toast('⚠️ Firebase niet beschikbaar');return;}
   const btn=document.getElementById('sync-join-btn');
   if(btn){btn.disabled=true;btn.textContent='Verbinden...';}
   try{
-    const r=await fetch(SYNC_API+'/'+id,{cache:'no-store'});
-    if(!r.ok){toast('⚠️ Sync-code niet gevonden');if(btn){btn.disabled=false;btn.textContent='Verbinden';}return;}
-    const d=await r.json();
-    if(!d.customers||!d.jobs){toast('⚠️ Ongeldig sync-bestand');return;}
-    settings.syncId=id;settings.syncEnabled=true;
-    customers=d.customers;jobs=d.jobs;
-    if(d.availability)availability=d.availability;
-    if(d.aiModel)aiModel=d.aiModel;
-    if(d.geocodeCache)geocodeCache=d.geocodeCache;
-    if(d.settings){const {ownerPin,workerPin,...rest}=d.settings;settings={...settings,...rest};}
-    settings.lastSync=d._ts||Date.now();
-    saveLocalOnly();render();
-    toast('✅ Verbonden! '+customers.length+' klanten, '+jobs.length+' klussen opgehaald.');
+    const snap=await window._fb.getDoc(_fbDoc());
+    if(!snap.exists()){toast('⚠️ Geen data gevonden in Firebase');if(btn){btn.disabled=false;btn.textContent='Verbinden als collega';}return;}
+    _applyCloudData(snap.data());
+    settings.syncEnabled=true;
+    saveLocalOnly();
+    startFirestoreListener();
+    render();
+    toast('✅ Verbonden! '+customers.length+' klanten, '+jobs.length+' klussen geladen.');
   }catch(e){toast('⚠️ Verbinden mislukt: '+e.message);}
-  if(btn){btn.disabled=false;btn.textContent='Verbinden';}
+  if(btn){btn.disabled=false;btn.textContent='Verbinden als collega';}
 }
 
 function disableSync(){
-  if(!confirm('Cloud sync uitschakelen?'))return;
-  settings.syncId=null;settings.syncEnabled=false;settings.lastSync=null;
+  if(!confirm('Firebase sync uitschakelen?'))return;
+  if(_fbUnsub){_fbUnsub();_fbUnsub=null;}
+  settings.syncEnabled=false;settings.lastSync=null;
   saveLocalOnly();render();toast('Cloud sync uitgeschakeld');
 }
 
 function copySyncCode(){
-  const id=settings.syncId;if(!id)return;
-  navigator.clipboard?.writeText(id).then(()=>toast('📋 Code gekopieerd!')).catch(()=>{
-    const ta=document.createElement('textarea');ta.value=id;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('📋 Code gekopieerd!');
+  const url='https://alexanderfinkers-crypto.github.io/CleanSoft/glasplanner.html';
+  navigator.clipboard?.writeText(url).then(()=>toast('📋 Link gekopieerd! Stuur naar collega.')).catch(()=>{
+    const ta=document.createElement('textarea');ta.value=url;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('📋 Link gekopieerd!');
   });
 }
 
-// Auto-pull wanneer gebruiker terugkomt in de app
+// Auto-pull bij terugkomen in app
 document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden&&settings.syncEnabled&&settings.syncId)pullFromCloud(true).then(ok=>{if(ok)render();});
+  if(!document.hidden&&settings.syncEnabled)pullFromCloud(true).then(ok=>{if(ok)render();});
+});
+
+// Start listener zodra Firebase geladen is
+window.addEventListener('fb-ready',()=>{
+  if(settings.syncEnabled)startFirestoreListener();
 });
 
 // ════════════════════════════════════════════════
@@ -7060,9 +7115,12 @@ initDark();
 render();
 loadWeather();
 checkRemindersAndNotify();
-// Pull latest cloud data on startup (silent — only re-renders if newer data found)
-if(settings.syncEnabled&&settings.syncId){
-  pullFromCloud(true).then(ok=>{if(ok)render();});
+// Pull latest cloud data on startup via Firebase
+if(settings.syncEnabled){
+  window.addEventListener('fb-ready',()=>{
+    startFirestoreListener();
+    pullFromCloud(true).then(ok=>{if(ok)render();});
+  },{once:true});
 }
 </script>
 </body>
