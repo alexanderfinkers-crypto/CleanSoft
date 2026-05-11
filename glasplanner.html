@@ -1925,19 +1925,82 @@ function renderAILead(){
       ${!hasKey?`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;font-size:12px;color:#92400e;margin-bottom:12px">⚠️ Voeg eerst een Claude API-sleutel toe in Instellingen.</div>`:''}
       <div class="form-group">
         <label class="form-label">Bericht (mail / WhatsApp)</label>
-        <textarea id="lead-tekst" class="form-control" rows="6" placeholder="Hallo, ik wil graag een offerte voor het wassen van mijn ramen. Ik woon op Hoofdstraat 12 in Amsterdam..." style="font-size:13px;line-height:1.6"></textarea>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <button onclick="leadPasteClipboard()" style="flex:1;padding:8px;border:1.5px solid var(--primary);border-radius:8px;background:var(--primary-light);color:var(--primary);font-size:12px;font-weight:700;cursor:pointer;touch-action:manipulation">📋 Tekst plakken</button>
+          <button onclick="leadPasteImage()" style="flex:1;padding:8px;border:1.5px solid var(--purple);border-radius:8px;background:var(--purple-light);color:var(--purple);font-size:12px;font-weight:700;cursor:pointer;touch-action:manipulation">🖼️ Foto plakken</button>
+        </div>
+        <textarea id="lead-tekst" class="form-control" rows="6" placeholder="Plak hier tekst (Ctrl+V op laptop, knop hierboven op telefoon)&#10;Foto plakken? Kopieer een afbeelding en druk Ctrl+V of gebruik de 🖼️ knop." style="font-size:13px;line-height:1.6" onpaste="leadOnPaste(event)"></textarea>
       </div>
       <div class="form-group">
-        <label class="form-label">Foto's meesturen (optioneel)</label>
+        <label class="form-label">Foto's</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="lead-img-preview">
-          ${_leadImages.map((img,i)=>`<div style="position:relative"><img src="${img.b64}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:2px solid var(--border)"><button onclick="leadRemoveImg(${i})" style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button></div>`).join('')}
-          <button onclick="document.getElementById('lead-img-input').click()" style="width:64px;height:64px;border:2px dashed var(--border);border-radius:8px;background:var(--gray-light);font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+          ${_leadImages.map((img,i)=>`<div style="position:relative"><img src="${img.b64}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:2px solid var(--border)"><button onclick="leadRemoveImg(${i})" style="position:absolute;top:-6px;right:-6px;background:var(--danger);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation">×</button></div>`).join('')}
+          <button onclick="document.getElementById('lead-img-input').click()" style="width:72px;height:72px;border:2px dashed var(--border);border-radius:8px;background:var(--gray-light);font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation" title="Kies foto">📁</button>
         </div>
         <input type="file" id="lead-img-input" accept="image/*" multiple style="display:none" onchange="leadAddImages(this)">
       </div>
       ${resHtml}
       <button class="btn btn-primary btn-block" onclick="analyseerLead()" ${!hasKey?'disabled':''}>🤖 Analyseren met AI</button>
     </div>`;
+}
+
+async function leadPasteClipboard(){
+  try{
+    const text=await navigator.clipboard.readText();
+    if(!text){toast('⚠️ Klembord is leeg');return;}
+    const el=document.getElementById('lead-tekst');
+    if(el){el.value+=(el.value?'\n':'')+text;el.focus();}
+    toast('📋 Tekst geplakt!');
+  }catch(e){
+    // Fallback: focus textarea zodat gebruiker zelf Ctrl+V/lang indrukken kan
+    const el=document.getElementById('lead-tekst');
+    if(el){el.focus();el.select();}
+    toast('⚠️ Tik lang op het tekstveld → Plakken');
+  }
+}
+
+async function leadPasteImage(){
+  try{
+    const items=await navigator.clipboard.read();
+    let found=false;
+    for(const item of items){
+      const imgType=item.types.find(t=>t.startsWith('image/'));
+      if(imgType){
+        const blob=await item.getType(imgType);
+        const reader=new FileReader();
+        reader.onload=e=>{
+          _leadImages.push({b64:e.target.result,mime:imgType});
+          render();
+          toast('🖼️ Foto geplakt!');
+        };
+        reader.readAsDataURL(blob);
+        found=true;
+        break;
+      }
+    }
+    if(!found)toast('⚠️ Geen afbeelding op klembord');
+  }catch(e){toast('⚠️ Gebruik de 📁 knop om een foto te kiezen');}
+}
+
+function leadOnPaste(e){
+  // Afbeeldingen via Ctrl+V / lange druk plakken
+  const items=e.clipboardData?.items;
+  if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      e.preventDefault();
+      const blob=item.getAsFile();
+      if(!blob)continue;
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        _leadImages.push({b64:ev.target.result,mime:item.type});
+        render();
+        toast('🖼️ Foto geplakt!');
+      };
+      reader.readAsDataURL(blob);
+      break;
+    }
+  }
 }
 
 function leadAddImages(input){
