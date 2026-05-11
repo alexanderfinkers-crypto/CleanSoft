@@ -2291,16 +2291,18 @@ function renderSettings(){
       <div class="settings-section">
         <div class="settings-section-title">📅 Google Agenda</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">Koppel je persoonlijke Google Agenda — jouw afspraken verschijnen als grijze blokken in het Kalender-overzicht.</div>
-        <div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#92400e;line-height:1.6">
-          ⚠️ <b>Vereisten:</b> Open de app via <b>http://localhost:8080</b> (niet via file://), én voer hieronder je eigen Google Client ID in.<br>
+        ${location.protocol==='file:'?`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#92400e;line-height:1.6">
+          ⚠️ <b>Vereisten:</b> Open de app via <b>https://</b> (niet via file://). Upload naar GitHub Pages of gebruik een lokale server.<br>
           <a href="https://console.cloud.google.com" target="_blank" style="color:#0066bb;font-weight:700">→ console.cloud.google.com</a> — gratis, 10 minuten instellen.
-        </div>
+        </div>`:`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#166534;line-height:1.6">
+          ✅ <b>Je gebruikt https://</b> — Google Agenda kan hier werken. Voer je Client ID in en klik Verbinden.
+        </div>`}
         <div class="form-group">
           <label class="form-label">Google Client ID</label>
           <input class="form-control" id="st-gclient" type="text" placeholder="12345-abc.apps.googleusercontent.com"
             value="${esc(settings.googleClientId||'')}"
             style="font-size:12px">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:5px">Maak aan via Google Cloud Console → APIs → Credentials → OAuth 2.0 → Web App → origin: <b>http://localhost:8080</b></div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:5px">Maak aan via Google Cloud Console → Google Auth Platform → Clients → OAuth 2.0 → Web App → origin: <b>${location.origin}</b></div>
         </div>
         ${gCalConnected()
           ?`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;margin-bottom:10px">
