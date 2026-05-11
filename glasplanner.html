@@ -513,11 +513,12 @@ function loadAll(){
   settings={...settings,...(parse('gp_set',{})||{})};
   geocodeCache=parse('gp_geocache',{});
   photos=parse('gp_photos',{});
-  if(!customers.length&&!jobs.length)seedDemo();
+  if(!customers.length&&!jobs.length&&!localStorage.getItem('gp_setup'))seedDemo();
   availability.w1.name=settings.w1Name;
   availability.w2.name=settings.w2Name;
 }
 function saveLocalOnly(){
+  localStorage.setItem('gp_setup','1');
   localStorage.setItem('gp_cust',JSON.stringify(customers));
   localStorage.setItem('gp_jobs',JSON.stringify(jobs));
   localStorage.setItem('gp_avail',JSON.stringify(availability));
@@ -537,6 +538,7 @@ function saveAll(){
 }
 
 function seedDemo(){
+  localStorage.setItem('gp_setup','1');
   const c1={id:uid(),name:'Familie Jansen',address:'Hoofdstraat 12, 1011 AA Amsterdam',phone:'020-1234567',price:85,frequency:'4w',notes:'Hond in de tuin, bellen voor binnenkomst'};
   const c2={id:uid(),name:'Bakkerij De Croissant',address:'Marktplein 5, 2011 BG Haarlem',phone:'023-9876543',price:135,frequency:'2w',notes:'Vroeg komen, opent om 07:00'};
   const c3={id:uid(),name:'De Vries Wonen',address:'Kerkstraat 88, 2012 XK Haarlem',phone:'023-5554433',price:110,frequency:'4w',notes:''};
