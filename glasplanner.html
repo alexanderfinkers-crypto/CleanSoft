@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
@@ -436,6 +436,7 @@ const WORK_TYPES=[
   {id:'glasgeheel',     lbl:'Glasbewassing geheel',       basePrice:55,  baseMin:60,  icon:'🪟', glasswork:true},
   {id:'glasbeneden',    lbl:'Glasbewassing beneden',      basePrice:35,  baseMin:35,  icon:'🪟', glasswork:true},
   {id:'glasboven',      lbl:'Glasbewassing boven',        basePrice:35,  baseMin:35,  icon:'🪟', glasswork:true},
+  {id:'glasbuiten',     lbl:'Glasbewassing buiten',       basePrice:40,  baseMin:40,  icon:'🪟', glasswork:true},
   // Softwash — per m²
   {id:'softwashgevel',  lbl:'Softwash gevel',             basePrice:8,   baseMin:90,  icon:'🏠', perM2:true, priceMin:6,  priceMax:10, unit:'m²'},
   {id:'softwashdak',    lbl:'Softwash dak',               basePrice:8,   baseMin:120, icon:'🏚️', perM2:true, priceMin:6,  priceMax:10, unit:'m²'},
@@ -641,83 +642,122 @@ function sameRegion(addr1,addr2){
 // ════════════════════════════════════════════════
 function aiSuggestPrice(custId,workTypes,date,qtys={}){
   if(!workTypes||!workTypes.length)return null;
-  const key=[...workTypes].sort().join(',');
   const cust=getCust(custId);
-
-  // 1. Base price from work types — use m² qty when available
-  const qtySummaryParts=[];
-  let base=workTypes.reduce((s,wid)=>{
-    const t=WORK_TYPES.find(x=>x.id===wid);
-    if(!t)return s+25;
-    if((t.perM2||t.perM)&&qtys[wid]){
-      const mid=((t.priceMin||t.basePrice)+(t.priceMax||t.basePrice))/2;
-      const sub=Math.round(qtys[wid]*mid);
-      qtySummaryParts.push(`${t.lbl}: ${qtys[wid]} ${t.unit||'m²'} × €${mid.toFixed(1)} = €${sub}`);
-      return s+sub;
-    }
-    if(t.perStuk)return s+(t.pricePerStuk||t.basePrice);
-    if(t.priceFrom)return s+t.priceFrom;
-    return s+t.basePrice;
-  },0);
-
-  // 2. Learned historical price (weighted)
+  const notes=[];
+  const minFee=Math.max(settings.hourlyRate||45,25);
+  const key=[...workTypes].sort().join(',');
   const hist=aiModel.prices[key]||[];
-  let learned=0,histWeight=0;
-  if(hist.length>0){
-    learned=hist.reduce((s,p)=>s+p,0)/hist.length;
-    histWeight=Math.min(0.7,hist.length*0.1); // max 70% weight at 7+ datapoints
-    base=base*(1-histWeight)+learned*histWeight;
+
+  // ══ ROUTE 1: klant heeft een vaste prijs ══
+  // Eigen prijs is het meest betrouwbare signaal — NIET bijsturen met toeslagen of historische data.
+  if(cust?.price>0){
+    const base=cust.price;
+    notes.push(`Vaste klantprijs: €${base}`);
+
+    // Controleer of collega's in de buurt dichtbij zitten qua prijs (sanity-check)
+    const similar=customers.filter(c=>c.id!==custId&&c.price>0&&sameRegion(c.address,cust.address||''));
+    if(similar.length){
+      const avg=Math.round(similar.reduce((s,c)=>s+c.price,0)/similar.length);
+      const pct=Math.round(Math.abs(base-avg)/avg*100);
+      if(pct>40)notes.push(`Let op: buurtgemiddelde is €${avg} (${pct}% afwijking)`);
+      else notes.push(`Buurtgemiddelde: €${avg} (${similar.length} klanten)`);
+    }
+
+    const suggestion=Math.max(minFee,Math.ceil(base/5)*5);
+    return{
+      suggestion,
+      min:suggestion,       // eigen prijs = min én max → geen twijfel
+      max:suggestion,
+      confidence:90,
+      dataPoints:hist.length,
+      source:'klantprijs',
+      notes,
+    };
   }
 
-  // 3. Distance factor (from home base to customer)
-  let distFactor=1;
-  if(settings.homePostcode&&cust){
+  // ══ ROUTE 2: schatting (geen eigen prijs bekend) ══
+  let base=0;
+  let source='uurtarief';
+
+  // ── Stap A: Vergelijkbare klanten in dezelfde regio (sterkste externe signaal)
+  const sameFreqSameRegio=customers.filter(c=>c.id!==custId&&c.price>0
+    &&c.frequency===(cust?.frequency||null)&&sameRegion(c.address,cust?.address||''));
+  const sameRegio=customers.filter(c=>c.id!==custId&&c.price>0
+    &&sameRegion(c.address,cust?.address||''));
+
+  if(sameFreqSameRegio.length>=2){
+    // Mediaan in plaats van gemiddelde → robuuster tegen uitschieters
+    const sorted=[...sameFreqSameRegio].sort((a,b)=>a.price-b.price);
+    const mid=Math.floor(sorted.length/2);
+    base=sorted.length%2?sorted[mid].price:Math.round((sorted[mid-1].price+sorted[mid].price)/2);
+    source='vergelijkbaar';
+    notes.push(`Mediaan van ${sameFreqSameRegio.length} vergelijkbare klanten (zelfde wijk + frequentie): €${base}`);
+  } else if(sameFreqSameRegio.length===1){
+    base=sameFreqSameRegio[0].price;
+    source='vergelijkbaar';
+    notes.push(`Vergelijkbare klant in de buurt (${sameFreqSameRegio[0].name}): €${base}`);
+  } else if(sameRegio.length>=2){
+    // Zelfde regio, andere frequentie → gebruik als referentie maar minder gewicht
+    const sorted=[...sameRegio].sort((a,b)=>a.price-b.price);
+    const mid=Math.floor(sorted.length/2);
+    const regionBase=sorted.length%2?sorted[mid].price:Math.round((sorted[mid-1].price+sorted[mid].price)/2);
+    base=regionBase;
+    source='regio';
+    notes.push(`Buurtgemiddelde (${sameRegio.length} klanten, andere frequentie): €${base}`);
+  } else {
+    // ── Stap B: Uurtarief op basis van ingeschatte tijd
+    const mins=workTypes.reduce((s,wid)=>{const t=WORK_TYPES.find(x=>x.id===wid);return s+(t?.baseMin||30);},0);
+    base=Math.round(mins/60*settings.hourlyRate);
+    source='uurtarief';
+    notes.push(`Geen vergelijkbare klanten gevonden. Schatting: ${Math.round(mins)} min × €${settings.hourlyRate}/u = €${base}`);
+  }
+
+  // ── Stap C: Historische data (alleen als schatting, niet bij vergelijkbare klanten)
+  if(source==='uurtarief'&&hist.length>=3){
+    const recent=hist.slice(-6);
+    const learned=Math.round(recent.reduce((s,p)=>s+p,0)/recent.length);
+    const w=Math.min(0.45,hist.length*0.06); // max 45% gewicht van historische data
+    const prev=base;
+    base=Math.round(base*(1-w)+learned*w);
+    notes.push(`Bijgesteld op basis van ${hist.length} eerdere klussen: €${prev} → €${base}`);
+  }
+
+  // ── Stap D: Minimumtarief
+  if(base<minFee){base=minFee;notes.push(`Minimumtarief €${minFee} toegepast`);}
+
+  // ── Stap E: Frequentietoeslag — alleen bij schatting, NIET bij eigen/vergelijkbare prijs
+  if(source==='uurtarief'&&cust?.frequency){
+    const days=FREQ_DAYS[cust.frequency]||0;
+    if(days>=182){base=Math.round(base*1.15);notes.push('Eenmalig/jaarlijks → +15% (minder routine)');}
+    else if(days>=84){base=Math.round(base*1.08);notes.push('Kwartaal → +8%');}
+  }
+
+  // ── Stap F: Reistoeslag (alleen als ver van thuisbasis)
+  let travelExtra=0;
+  if(settings.homePostcode&&cust?.address){
     const homePC=parseInt(settings.homePostcode,10)||0;
     const custPC=extractPostcode(cust.address)||homePC;
     const km=postcodeDistance(homePC,custPC);
-    distFactor=1+Math.min(0.25,km/200); // max +25% for distance
+    if(km>20){travelExtra=Math.min(15,Math.round((km-20)/10)*5);notes.push(`Reistoeslag €${travelExtra} (${Math.round(km)} km van thuisbasis)`);}
   }
 
-  // 4. Efficiency bonus: nearby jobs on same day → slight reduction (lower overhead)
-  let effFactor=1;
-  let effNote='';
-  if(date&&cust){
-    const nearby=jobs.filter(j=>j.date===date&&j.custId!==custId).filter(j=>{
-      const jc=getCust(j.custId);
-      return jc&&sameRegion(cust.address,jc.address);
-    });
-    if(nearby.length>0){effFactor=0.95;effNote=`Regio-efficiëntie: ${nearby.length} klus(sen) in de buurt`;}
-  }
+  const suggestion=Math.max(minFee,Math.ceil((base+travelExtra)/5)*5);
+  // Betrouwbaarheidsscore: hoger als er meer vergelijkbare klanten zijn
+  const conf=Math.min(90,
+    (source==='vergelijkbaar'?65:source==='regio'?55:40)+
+    Math.min(sameRegio.length*5,20)+
+    (hist.length>=5?10:hist.length*2));
 
-  // 5. Frequency factor (less frequent = slightly higher price)
-  let freqFactor=1;
-  if(cust?.frequency){
-    const days=FREQ_DAYS[cust.frequency]||0;
-    if(days===0||days>=365)freqFactor=1.15;
-    else if(days>=84)freqFactor=1.05;
-    else freqFactor=1.0;
-  }
-
-  const raw=base*distFactor*effFactor*freqFactor;
-  const suggestion=Math.ceil(raw/5)*5; // round up to nearest €5
-
-  // Confidence based on data
-  const conf=Math.min(94,40+hist.length*9+(cust?.price>0?8:0));
-
-  // Breakdown
-  const laborBase=workTypes.reduce((s,w)=>{const t=WORK_TYPES.find(x=>x.id===w);return s+(t?(t.baseMin/60*settings.hourlyRate):15);},0);
-  const matBase=workTypes.reduce((s,w)=>{const t=WORK_TYPES.find(x=>x.id===w);return s+(t?Math.round(t.basePrice*0.15):3);},0);
-  const travelBase=Math.round((distFactor-1)*base);
-
+  // Min/max: hoe minder zeker, hoe breder de bandbreedte
+  const spread=source==='vergelijkbaar'?0.08:source==='regio'?0.12:0.18;
   return{
     suggestion,
-    min:Math.max(25,Math.round(suggestion*0.85/5)*5),
-    max:Math.round(suggestion*1.22/5)*5,
+    min:Math.max(minFee,Math.round(suggestion*(1-spread)/5)*5),
+    max:Math.round(suggestion*(1+spread)/5)*5,
     confidence:conf,
     dataPoints:hist.length,
-    breakdown:{labor:Math.round(laborBase),material:Math.round(matBase),travel:travelBase,hist:hist.length>0?Math.round((learned-laborBase-matBase)):0},
-    notes:[effNote,hist.length>0?`Geleerd van ${hist.length} vergelijkbare klussen`:''].filter(Boolean),
-    qtySummary:qtySummaryParts.length?qtySummaryParts.join(' · '):null,
+    source,
+    notes,
   };
 }
 
@@ -728,67 +768,104 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
   if(!workTypes||!workTypes.length)return null;
   const cust=getCust(custId);
   const lineItems=[];
-  let base=0;
+  const notes=[];
+  const minFee=Math.max(settings.hourlyRate||45,25);
+  const key=[...workTypes].sort().join(',');
+  const hist=aiModel.prices[key]||[];
+  let calcBase=0; // puur berekend bedrag op basis van werk
 
+  // ── Stap 1: Bereken prijs per werktype (objectief, onafhankelijk van klant)
   workTypes.forEach(wid=>{
     const wt=WORK_TYPES.find(x=>x.id===wid);if(!wt)return;
     if(wt.perM2||wt.perM){
-      // Softwash / oppervlakte
-      const qty=qtys[wid]||0;
+      const qty=parseFloat(qtys[wid])||0;
       const lvl=levels[wid]||'mid';
       const ppM=lvl==='low'?wt.priceMin:lvl==='high'?wt.priceMax:(wt.priceMin+wt.priceMax)/2;
-      const sub=qty>0?Math.round(qty*ppM):Math.round(wt.priceFrom||wt.basePrice);
+      const sub=qty>0?Math.round(qty*ppM):Math.round(wt.basePrice);
       const lvlLbl=lvl==='low'?'laag':lvl==='high'?'hoog':'midden';
-      lineItems.push({icon:wt.icon||'🏠',lbl:qty>0?`${wt.lbl} — ${qty} ${wt.unit||'m²'} × €${ppM} (${lvlLbl})`:`${wt.lbl} (geen m² ingevuld)`,price:sub});
-      base+=sub;
+      lineItems.push({icon:wt.icon||'🏠',lbl:qty>0?`${wt.lbl} — ${qty} ${wt.unit||'m²'} × €${ppM.toFixed(1)} (${lvlLbl})`:`${wt.lbl} (geen m² opgegeven — basisprijs)`,price:sub});
+      calcBase+=sub;
     } else if(wt.perStuk){
-      // Per stuk (dakkapel, serre, zonwering)
       const qty=Math.max(1,parseFloat(qtys[wid])||1);
       const sub=Math.round(qty*wt.pricePerStuk);
       lineItems.push({icon:wt.icon||'🔧',lbl:`${wt.lbl} — ${qty}× €${wt.pricePerStuk}`,price:sub});
-      base+=sub;
+      calcBase+=sub;
     } else if(wt.glasswork){
-      // Glasbewassing — uurtarief, gebruik ingevulde minuten
       const mins=Math.max(5,parseFloat(qtys[wid+'_min'])||wt.baseMin);
       const sub=Math.round(mins/60*settings.hourlyRate);
       lineItems.push({icon:wt.icon||'🪟',lbl:`${wt.lbl} — ${mins} min × €${settings.hourlyRate}/u`,price:sub});
-      base+=sub;
+      calcBase+=sub;
     } else {
-      // Overige vaste prijs
       const sub=wt.priceFrom||wt.basePrice;
-      lineItems.push({icon:wt.icon||'🔧',lbl:`${wt.lbl}`,price:sub});
-      base+=sub;
+      lineItems.push({icon:wt.icon||'🔧',lbl:wt.lbl,price:sub});
+      calcBase+=sub;
     }
   });
 
-  // Distance factor
-  let distFactor=1;
-  if(settings.homePostcode&&cust){
+  // ── Stap 2: Minimumtarief
+  if(calcBase<minFee){calcBase=minFee;notes.push(`Minimumtarief €${minFee} toegepast`);}
+
+  // ── Stap 3: Reistoeslag (objectief, op basis van afstand)
+  let travelBonus=0;
+  if(settings.homePostcode&&cust?.address){
     const homePC=parseInt(settings.homePostcode,10)||0;
     const custPC=extractPostcode(cust.address)||homePC;
     const km=postcodeDistance(homePC,custPC);
-    distFactor=1+Math.min(0.25,km/200);
+    if(km>20){travelBonus=Math.min(15,Math.round((km-20)/10)*5);
+      if(travelBonus>0)notes.push(`Reistoeslag €${travelBonus} (${Math.round(km)} km)`);}
   }
-  const travelBonus=Math.round((distFactor-1)*base);
 
-  const total=Math.ceil((base+travelBonus)/5)*5;
+  let finalBase=calcBase+travelBonus;
 
-  // Historical data for confidence
-  const key=[...workTypes].sort().join(',');
-  const hist=aiModel.prices[key]||[];
-  const conf=Math.min(94,50+hist.length*8+(cust?.price>0?6:0));
+  // ── Stap 4: Eigen klantprijs — toon als informatief signaal, pas NIET de berekening aan
+  // De prijs-tool berekent WAT het werk werkelijk kost; de klantprijs is wat ze gewend zijn.
+  // Als er een grote kloof is, meldt de tool dit zodat de gebruiker bewust kan kiezen.
+  const sameRegio=cust?customers.filter(c=>c.id!==cust.id&&c.price>0&&sameRegion(c.address,cust.address||'')):[];
+  const avgSimilar=sameRegio.length?Math.round(sameRegio.reduce((s,c)=>s+c.price,0)/sameRegio.length):0;
 
-  const notes=[];
-  if(travelBonus>0)notes.push(`Reistoeslag €${travelBonus} (afstand)`);
-  if(hist.length>0)notes.push(`Geleerd van ${hist.length} vergelijkbare klussen`);
+  if(cust?.price>0){
+    const diff=Math.round((calcBase-cust.price)/cust.price*100);
+    if(Math.abs(diff)>25){
+      notes.push(`⚠️ Berekend (€${calcBase}) wijkt ${diff>0?'+':''}${diff}% af van vaste klantprijs €${cust.price}`);
+      notes.push('Tip: kloppen de m² / minuten? Of is de klantprijs toe aan herziening?');
+    } else {
+      notes.push(`✓ Berekend bedrag sluit aan bij klantprijs €${cust.price}`);
+    }
+  }
+  if(avgSimilar>0){
+    notes.push(`Buurtgemiddelde: €${avgSimilar} (${sameRegio.length} vergelijkbare klanten)`);
+  }
+
+  // ── Stap 5: Historische data als zachte correctie (max 25% gewicht, alleen bij schatting)
+  if(!cust?.price&&hist.length>=4){
+    const recent=hist.slice(-6);
+    const learned=Math.round(recent.reduce((s,p)=>s+p,0)/recent.length);
+    const w=Math.min(0.25,hist.length*0.04);
+    finalBase=Math.round(finalBase*(1-w)+learned*w);
+    if(Math.abs(finalBase-(calcBase+travelBonus))>3)
+      notes.push(`Lichte bijstelling o.b.v. ${hist.length} eerdere klussen: €${calcBase+travelBonus} → €${finalBase}`);
+  }
+
+  // ── Stap 6: Frequentietoeslag — alleen als er geen vaste klantprijs is
+  if(!cust?.price&&cust?.frequency){
+    const days=FREQ_DAYS[cust.frequency]||0;
+    if(days>=182){finalBase=Math.round(finalBase*1.12);notes.push('Eenmalig/jaarlijks → +12%');}
+    else if(days>=84){finalBase=Math.round(finalBase*1.07);notes.push('Kwartaal → +7%');}
+  }
+
+  const total=Math.max(minFee,Math.ceil(finalBase/5)*5);
+  const conf=Math.min(92,
+    (cust?.price>0?72:avgSimilar>0?60:48)+
+    lineItems.filter(l=>l.price>0).length*3+
+    (hist.length>=4?8:0));
 
   return{
     suggestion:total,
-    min:Math.max(25,Math.round(total*0.9/5)*5),
-    max:Math.round(total*1.15/5)*5,
+    min:Math.max(minFee,Math.round(total*0.92/5)*5),
+    max:Math.round(total*1.10/5)*5,
     confidence:conf,
     dataPoints:hist.length,
-    breakdown:{labor:0,material:0,travel:travelBonus,hist:0},
+    breakdown:{labor:calcBase,material:0,travel:travelBonus,hist:0},
     lineItems,
     notes,
   };
@@ -907,25 +984,104 @@ function aiIsAvailable(dateStr){
 
 function aiFindBestDate(custId,fromDate,maxDays=30){
   const cust=getCust(custId);
+  const myRegion=cust?custRegionCode(cust):'????';
   let best=null,bestScore=-999;
   for(let i=0;i<maxDays;i++){
     const ds=addDays(fromDate,i);
     if(!aiIsAvailable(ds))continue;
-    const dayJobs=jobs.filter(j=>j.date===ds);
+    const dayJobs=jobs.filter(j=>j.date===ds&&j.status!=='afgerond');
     if(dayJobs.length>=settings.maxJobsPerDay)continue;
-    let score=30-i; // prefer sooner
+    let score=30-i;
     let reason='Beschikbare dag';
     let nearbyNames=[];
     if(cust){
+      const regionCounts={};
       dayJobs.forEach(j=>{
-        const jc=getCust(j.custId);
-        if(jc&&sameRegion(cust.address,jc.address)){score+=25;reason=`Zelfde regio als ${jc.name}`;nearbyNames.push(jc.name);}
+        const jc=getCust(j.custId);if(!jc)return;
+        const r=custRegionCode(jc);
+        regionCounts[r]=(regionCounts[r]||0)+1;
+        if(r===myRegion){score+=40;nearbyNames.push(jc.name);}
+        else if(sameRegion(cust.address,jc.address)){score+=15;nearbyNames.push(jc.name);}
       });
+      if(nearbyNames.length)reason=`Zelfde wijk als ${nearbyNames.slice(0,2).map(n=>n.split(' ')[0]).join(', ')}`;
+      // Penalise days dominated by other regions
+      const dominantRegion=Object.entries(regionCounts).sort((a,b)=>b[1]-a[1])[0];
+      if(dominantRegion&&dominantRegion[0]!==myRegion&&dominantRegion[1]>=2)score-=20;
     }
-    score-=dayJobs.length*4; // penalise busy days slightly
-    if(score>bestScore){bestScore=score;best={date:ds,reason,effScore:Math.min(99,Math.max(40,50+score)),nearbyNames};}
+    score-=dayJobs.length*3;
+    if(score>bestScore){
+      bestScore=score;
+      const eff=Math.min(99,Math.max(30,40+score));
+      best={date:ds,reason,effScore:eff,nearbyNames};
+    }
   }
   return best;
+}
+
+// Wijk-gebaseerde groepsplanning
+function aiPlanByWijk(){
+  const pending=aiGetPendingCustomers();
+  // Groepeer per regio
+  const byRegion={};
+  pending.forEach(p=>{
+    const r=custRegionCode(p.cust);
+    if(!byRegion[r])byRegion[r]=[];
+    byRegion[r].push(p);
+  });
+  // Sorteer regio's op urgentie (meest dringend eerst)
+  const regions=Object.entries(byRegion).sort((a,b)=>{
+    const ua=Math.min(...a[1].map(p=>p.urgency));
+    const ub=Math.min(...b[1].map(p=>p.urgency));
+    return ua-ub;
+  });
+  // Plan per regio: verdeel over dagen
+  const plan=[]; // [{date, region, label, customers:[]}]
+  regions.forEach(([region,pending])=>{
+    // Sorteer klanten: verlopen eerst, dan op urgentie
+    const sorted=[...pending].sort((a,b)=>a.urgency-b.urgency);
+    let remaining=[...sorted];
+    let attempt=0;
+    while(remaining.length>0&&attempt<5){
+      attempt++;
+      const fromDate=remaining[0].urgency<0?today():remaining[0].dueDate.toISOString().slice(0,10);
+      const best=_findWijkDay(region,fromDate,remaining.length);
+      if(!best){break;}
+      const chunk=remaining.slice(0,best.slots);
+      // Voeg toe aan plan of bestaande dag
+      const existing=plan.find(p=>p.date===best.date&&p.region===region);
+      if(existing){existing.customers.push(...chunk);}
+      else{plan.push({date:best.date,region,label:custRegionLabel(region),customers:chunk,color:REGION_COLORS[Object.keys(byRegion).indexOf(region)%REGION_COLORS.length]});}
+      remaining=remaining.slice(best.slots);
+    }
+  });
+  // Sorteer plan op datum
+  return plan.sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+function _findWijkDay(region,fromDate,needed){
+  for(let i=0;i<MAX_PLAN_DAYS;i++){
+    const ds=addDays(fromDate,i);
+    if(!aiIsAvailable(ds))continue;
+    const dayJobs=jobs.filter(j=>j.date===ds&&j.status!=='afgerond');
+    const slots=settings.maxJobsPerDay-dayJobs.length;
+    if(slots<=0)continue;
+    // Check of deze dag al door een andere regio gedomineerd wordt
+    const dayRegions=dayJobs.map(j=>{const c=getCust(j.custId);return c?custRegionCode(c):'?';});
+    const regionCount=dayRegions.filter(r=>r===region).length;
+    const otherCount=dayRegions.filter(r=>r!==region).length;
+    // Geef voorkeur aan dag waar dezelfde regio al is, of lege dag
+    if(otherCount<=1||regionCount>0){
+      return{date:ds,slots:Math.min(slots,needed)};
+    }
+  }
+  // Fallback: eerste beschikbare dag
+  for(let i=0;i<MAX_PLAN_DAYS;i++){
+    const ds=addDays(fromDate,i);
+    if(!aiIsAvailable(ds))continue;
+    const slots=settings.maxJobsPerDay-jobs.filter(j=>j.date===ds&&j.status!=='afgerond').length;
+    if(slots>0)return{date:ds,slots:Math.min(slots,needed)};
+  }
+  return null;
 }
 
 // ════════════════════════════════════════════════
@@ -1838,15 +1994,18 @@ function updateAIPrice(){
   const r=aiSuggestPrice(custId,work,date,qtys);
   if(!r){widget.innerHTML='';return;}
   const breakdown=r.qtySummary?`<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${r.qtySummary}</div>`:'';
+  const srcLabel=r.source==='klantprijs'?'✅ Vaste klantprijs':r.source==='vergelijkbaar'?'👥 Vergelijkbare klanten':r.source==='regio'?'📍 Buurtgemiddelde':'⏱️ Schatting op uurtarief';
+  const rangeHtml=r.min===r.max?`<div class="ai-price-range">Vaste prijs — geen bandbreedte</div>`:`<div class="ai-price-range">Bandbreedte: €${r.min} – €${r.max}${r.dataPoints>0?' · '+r.dataPoints+' klussen geleerd':''}</div>`;
   widget.innerHTML=`<div class="ai-price-box">
     <div class="ai-price-box-top">
       <span class="ai-price-title">🧠 AI Prijsvoorstel</span>
       <span class="ai-price-conf">${r.confidence}% zekerheid</span>
     </div>
     <div class="ai-price-value">€${r.suggestion}</div>
-    <div class="ai-price-range">Bereik: €${r.min} – €${r.max}${r.dataPoints>0?' · Geleerd van '+r.dataPoints+' klussen':' · Nieuw klanttype'}</div>
+    <div style="font-size:11px;font-weight:700;color:var(--primary);margin:2px 0 4px;opacity:.8">${srcLabel}</div>
+    ${rangeHtml}
     ${breakdown}
-    ${r.notes.map(n=>`<div style="font-size:11px;color:var(--primary);margin-top:3px">💡 ${n}</div>`).join('')}
+    ${r.notes.map(n=>`<div style="font-size:11px;color:var(--primary);margin-top:3px">💡 ${esc(n)}</div>`).join('')}
   </div>`;
 }
 
@@ -2168,16 +2327,16 @@ function renderAIPriceTool(){
     <div class="price-result">
       <div style="font-size:13px;opacity:.8;margin-bottom:4px">🧠 Berekende prijs</div>
       <div class="price-big">€${r.suggestion}</div>
-      <div class="price-range">Bereik: €${r.min} – €${r.max}</div>
+      ${r.min!==r.max?`<div class="price-range">Bandbreedte: €${r.min} – €${r.max}</div>`:'<div class="price-range">Op basis van berekend werk</div>'}
       <div class="conf-wrap"><div class="conf-bar" style="width:${r.confidence}%"></div></div>
-      <div class="conf-label">${r.confidence}% zekerheid${r.dataPoints>0?' · '+r.dataPoints+' datapoints':' · Op basis van tarieven'}</div>
+      <div class="conf-label">${r.confidence}% zekerheid${r.dataPoints>0?' · '+r.dataPoints+' klussen geleerd':' · Op basis van tarieven'}</div>
     </div>
     <div class="card">
       <div style="font-size:14px;font-weight:700;margin-bottom:10px">📋 Onderbouwing</div>
-      ${r.lineItems?r.lineItems.map(li=>`<div class="breakdown-row"><span class="lbl">${li.icon} ${esc(li.lbl)}</span><span class="val">€${li.price}</span></div>`).join(''):''}
-      ${r.breakdown.travel>0?`<div class="breakdown-row"><span class="lbl">🚗 Reistoeslag</span><span class="val">€${r.breakdown.travel}</span></div>`:''}
+      ${r.lineItems?r.lineItems.map(li=>`<div class="breakdown-row"><span class="lbl">${li.icon} ${esc(li.lbl)}</span><span class="val" style="color:var(--text);font-weight:700">€${li.price}</span></div>`).join(''):''}
+      ${r.breakdown?.travel>0?`<div class="breakdown-row"><span class="lbl">🚗 Reistoeslag</span><span class="val" style="color:var(--text);font-weight:700">€${r.breakdown.travel}</span></div>`:''}
       <div class="breakdown-row" style="border-top:2px solid var(--border);margin-top:4px"><span class="lbl" style="font-weight:700;font-size:15px">Totaal</span><span class="val" style="font-size:18px;color:var(--primary)">€${r.suggestion}</span></div>
-      ${r.notes.map(n=>`<div style="font-size:12px;color:var(--primary);padding:6px 0;border-top:1px solid var(--border)">💡 ${esc(n)}</div>`).join('')}
+      ${r.notes.length?`<div style="margin-top:8px">${r.notes.map(n=>`<div style="font-size:12px;padding:5px 0;border-top:1px solid var(--border);${n.startsWith('⚠️')?'color:var(--warning);font-weight:700':n.startsWith('✓')?'color:var(--success);font-weight:700':'color:var(--primary)'}">💡 ${esc(n)}</div>`).join('')}</div>`:''}
     </div>
     <div class="grid2">
       <button class="btn btn-primary" onclick="nav('new')">+ Klus aanmaken</button>
@@ -2188,20 +2347,50 @@ function renderAIPriceTool(){
 // ════════════════════════════════════════════════
 //  RENDER: AI ROUTE
 // ════════════════════════════════════════════════
+function _firstJobDay(){
+  // Eerste toekomstige dag (inclusief vandaag) met geplande klussen
+  const td=today();
+  const days=[...new Set(
+    jobs.filter(j=>j.status!=='afgerond'&&j.date>=td).map(j=>j.date)
+  )].sort();
+  return days[0]||td;
+}
+
 function renderAIRoute(){
-  const dateToUse=S.aiRouteDate||today();
+  // Standaard: eerste dag met klussen (niet per se vandaag)
+  if(!S.aiRouteDate)S.aiRouteDate=_firstJobDay();
+  const dateToUse=S.aiRouteDate;
   const result=aiOptimizeRoute(dateToUse);
   const routedJobs=result.route;
+
+  // Bouw lijst van dagen met klussen voor snelle navigatie
+  const td=today();
+  const jobDays=[...new Set(
+    jobs.filter(j=>j.status!=='afgerond'&&j.date>=td).map(j=>j.date)
+  )].sort().slice(0,14);
+
+  const dayChips=jobDays.map(d=>`<button onclick="setRouteDate('${d}')"
+    style="padding:4px 10px;border-radius:20px;border:2px solid ${d===dateToUse?'var(--primary)':'var(--border)'};
+    background:${d===dateToUse?'var(--primary)':'var(--card)'};color:${d===dateToUse?'#fff':'var(--text)'};
+    font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;touch-action:manipulation">
+    ${fmtShort(d)}${d===td?' (vandaag)':''} <span style="opacity:.7">${jobs.filter(j=>j.date===d&&j.status!=='afgerond').length}×</span>
+  </button>`).join('');
+
   return`
     <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
-    <div class="card" style="margin-bottom:14px">
-      <div class="form-group" style="margin-bottom:0"><label class="form-label">Dag selecteren</label>
-        <input class="form-control" type="date" value="${dateToUse}" onchange="setRouteDate(this.value)">
+
+    ${jobDays.length?`<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;-webkit-overflow-scrolling:touch">${dayChips}</div>`:''}
+
+    <div class="card" style="margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <div style="flex:1"><label class="form-label" style="margin-bottom:4px">Andere dag kiezen</label>
+        <input class="form-control" type="date" value="${dateToUse}" onchange="setRouteDate(this.value)" style="margin:0">
       </div>
     </div>
-    ${!routedJobs.length?emptyState('🗺️','Geen klussen op deze dag','Kies een dag met klussen'): `
-    ${result.savings>0?`<div class="route-savings">✅ Besparing: ~${result.savings} min vs. originele volgorde &middot; ${result.totalKm} km totaal</div>`:
-    `<div class="route-savings" style="background:var(--primary-light);color:var(--primary)">📍 ${routedJobs.length} klus${routedJobs.length>1?'sen':''} &middot; ${result.totalKm} km &middot; ${result.totalMin} min rijden</div>`}
+
+    ${!routedJobs.length?emptyState('🗺️','Geen klussen op deze dag','Kies een dag met ingeplande klussen'): `
+    ${result.savings>0
+      ?`<div class="route-savings">✅ Besparing t.o.v. willekeurige volgorde: ~${result.savings} min &middot; ${result.totalKm} km totaal</div>`
+      :`<div class="route-savings" style="background:var(--primary-light);color:var(--primary)">📍 ${routedJobs.length} klus${routedJobs.length>1?'sen':''} &middot; ${result.totalKm} km &middot; ${result.totalMin} min rijden</div>`}
     <div class="route-wrap">
       ${settings.homeAddress?`<div class="route-step"><div class="route-num home">🏠</div><div class="route-info"><div class="route-name">Thuisbasis</div><div class="route-addr">${esc(settings.homeAddress)}</div></div></div>`:''}
       ${routedJobs.map((r,i)=>{
@@ -2210,7 +2399,7 @@ function renderAIRoute(){
         return`<div class="route-step">
           <div class="route-num${r.job.status==='afgerond'?' done':''}">${i+1}</div>
           <div class="route-info">
-            ${r.travelFromPrev>0?`<div class="route-travel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v3"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>~${r.travelFromPrev} min rijden</div>`:''}
+            ${r.travelFromPrev>0?`<div class="route-travel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v3"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>${r.travelFromPrev} min rijden</div>`:''}
             <div class="route-name">${c?esc(c.name):'?'} ${r.job.time?`<span style="color:var(--text-muted);font-weight:500;font-size:13px">· ${r.job.time}</span>`:''}</div>
             <div class="route-addr">${c?esc(c.address):''}</div>
             ${wl.length?`<div class="route-chips">${wl.map(l=>`<span class="work-chip">${esc(l)}</span>`).join('')}</div>`:''}
@@ -2219,7 +2408,7 @@ function renderAIRoute(){
         </div>`;
       }).join('')}
     </div>
-    <button class="btn btn-primary btn-block" onclick="applyRoute('${dateToUse}')">✓ Volgorde opslaan als planning</button>`}`;
+    <button class="btn btn-primary btn-block" onclick="applyRoute('${dateToUse}')">🔄 Route toepassen (tijden bijwerken)</button>`}`;
 }
 
 // ════════════════════════════════════════════════
@@ -2227,36 +2416,53 @@ function renderAIRoute(){
 // ════════════════════════════════════════════════
 function renderAIAutoplan(){
   const pending=aiGetPendingCustomers();
-  const suggestions=pending.map(p=>{
-    const fromDate=p.urgency<0?today():p.dueDate.toISOString().slice(0,10);
-    const best=aiFindBestDate(p.cust.id,fromDate,MAX_PLAN_DAYS);
-    return{...p,best};
-  });
+  if(!pending.length)return`
+    <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
+    ${emptyState('🤖','Alles ingepland!','Alle terugkerende klanten hebben al een aanstaande afspraak')}`;
+
+  const wijkPlan=aiPlanByWijk();
+  const totalCustomers=wijkPlan.reduce((s,d)=>s+d.customers.length,0);
+
   return`
     <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
-    ${!suggestions.length?emptyState('🤖','Alles ingepland!','Alle terugkerende klanten hebben al een aanstaande afspraak'):`
-    <div style="font-size:14px;color:var(--text-muted);margin-bottom:14px">AI heeft de beste datums berekend op basis van regio en beschikbaarheid.</div>
-    <button class="btn btn-purple btn-block" onclick="acceptAllSuggestions()" style="margin-bottom:16px">🤖 Alles automatisch inplannen (${suggestions.filter(s=>s.best).length})</button>
-    ${suggestions.map((s,i)=>{
-      const b=s.best;
-      const eff=b?b.effScore:0;
-      const effCls=eff>=75?'eff-high':eff>=50?'eff-med':'eff-low';
-      return`<div class="plan-card" id="plan-card-${i}">
-        <div class="plan-top">
-          <div><div class="plan-name">${esc(s.cust.name)}</div>
-          <div style="font-size:11px;color:var(--text-muted)">${s.cust.frequency?FREQS[s.cust.frequency]:''} &middot; ${s.overdue?'<span style="color:var(--danger);font-weight:700">VERLOPEN</span>':'Over '+s.urgency+' dag'+(s.urgency!==1?'en':'')}</div></div>
-          ${b?`<span class="plan-eff ${effCls}">${eff}% eff.</span>`:''}
+    <div style="background:linear-gradient(135deg,var(--purple-light),#ede9fe);border:1.5px solid var(--purple);border-radius:14px;padding:14px;margin-bottom:14px">
+      <div style="font-size:13px;font-weight:800;color:var(--purple);margin-bottom:4px">🗺️ Wijk-gebaseerde planning</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.6">Klanten uit dezelfde wijk staan op dezelfde dag. ${totalCustomers} klanten verdeeld over ${wijkPlan.length} dag${wijkPlan.length!==1?'en':''}.</div>
+    </div>
+    <button class="btn btn-purple btn-block" onclick="acceptWijkPlan()" style="margin-bottom:16px">🤖 Heel plan inplannen + routes optimaliseren (${totalCustomers} klanten)</button>
+    ${wijkPlan.map((dag,di)=>{
+      const overdueCount=dag.customers.filter(p=>p.overdue).length;
+      // Zijn er al klussen op deze dag (eerder ingepland)?
+      const alreadyPlanned=jobs.filter(j=>j.date===dag.date&&j.status!=='afgerond');
+      const routeResult=alreadyPlanned.length>=2?aiOptimizeRoute(dag.date):null;
+      return`<div style="background:var(--card);border-radius:14px;box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden">
+        <div style="background:${dag.color}18;border-left:4px solid ${dag.color};padding:12px 14px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+            <div>
+              <div style="font-size:14px;font-weight:800;color:var(--text)">📅 ${fmtLong(dag.date)}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="background:${dag.color};color:#fff;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:700">${dag.label}</span>
+                ${overdueCount?`<span style="color:var(--danger);font-weight:700">⚠️ ${overdueCount} verlopen</span>`:''}
+                ${routeResult?`<span style="color:var(--success);font-weight:700">✅ ${alreadyPlanned.length} ingepland · ${routeResult.totalKm} km</span>`:''}
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              ${alreadyPlanned.length?`<button onclick="S.aiRouteDate='${dag.date}';nav('ai','route')" class="btn btn-sm" style="background:var(--success);color:#fff;border:none">🗺️ Route</button>`:''}
+              <button onclick="acceptDagPlan(${di})" class="btn btn-sm" style="background:${dag.color};color:#fff;border:none">${alreadyPlanned.length?'+ Meer':'✓ Inplannen'}</button>
+            </div>
+          </div>
         </div>
-        ${b?`<div class="plan-date">📅 ${fmtLong(b.date)}</div>
-        <div class="plan-reason">💡 ${esc(b.reason)}${b.nearbyNames.length?` (${b.nearbyNames.map(esc).join(', ')})`:''}</div>
-        <div class="plan-actions">
-          <button class="btn btn-primary btn-sm" onclick="acceptSuggestion(${i},'${s.cust.id}','${b.date}')">✓ Plannen</button>
-          <button class="btn btn-ghost btn-sm" onclick="planForCust('${s.cust.id}')">Andere datum</button>
-        </div>`:`<div style="color:var(--text-muted);font-size:13px">Geen beschikbare dag gevonden in ${MAX_PLAN_DAYS} dagen.</div>
-        <button class="btn btn-ghost btn-sm" onclick="nav('ai','availability')" style="margin-top:8px">📅 Beschikbaarheid instellen</button>`}
+        ${dag.customers.map(p=>`
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:700;color:var(--text)">${esc(p.cust.name)}</div>
+              <div style="font-size:11px;color:var(--text-muted)">${FREQS[p.cust.frequency]||''} · ${p.overdue?'<span style="color:var(--danger);font-weight:700">'+Math.abs(p.urgency)+' dagen verlopen</span>':'Over '+p.urgency+' dag'+(p.urgency!==1?'en':'')}</div>
+            </div>
+            <button onclick="planForCust('${p.cust.id}')" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:8px;background:none;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0;color:var(--text-muted)">Andere dag</button>
+          </div>`).join('')}
       </div>`;
     }).join('')}
-    `}`;
+    ${pending.length>totalCustomers?`<div style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:8px">⚠️ ${pending.length-totalCustomers} klant${pending.length-totalCustomers>1?'en':''} kon${pending.length-totalCustomers>1?'den':''} niet ingepland worden. Controleer je beschikbaarheid.</div>`:''}`;
 }
 
 // ════════════════════════════════════════════════
@@ -6418,26 +6624,130 @@ function acceptSuggestion(idx,custId,date){
 }
 
 function acceptAllSuggestions(){
-  const pending=aiGetPendingCustomers();
+  acceptWijkPlan();
+}
+
+// Route-sort: nearest-neighbor vanuit thuisbasis (of vorig adres)
+// Geeft gesorteerde array van {cust, ...rest} terug
+function _routeSortCustomers(custList,startAddr){
+  if(custList.length<=1)return custList;
+  const remaining=[...custList];
+  const sorted=[];
+  let curAddr=startAddr||settings.homeAddress||'';
+  while(remaining.length>0){
+    let bestIdx=0,bestMin=Infinity;
+    remaining.forEach((p,i)=>{
+      const addr=p.cust?.address||p.address||'';
+      const m=travelMin(curAddr,addr);
+      if(m<bestMin){bestMin=m;bestIdx=i;}
+    });
+    sorted.push(remaining[bestIdx]);
+    curAddr=remaining[bestIdx].cust?.address||remaining[bestIdx].address||'';
+    remaining.splice(bestIdx,1);
+  }
+  return sorted;
+}
+
+// Verander minuten naar tijdstring, startend vanuit starttijd (default 07:00)
+function _minsToTime(totalMins){
+  const h=Math.floor(totalMins/60),m=totalMins%60;
+  return `${String(Math.min(h,16)).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+
+function _planCustomersOnDate(customers,date){
   let count=0;
-  pending.forEach(p=>{
-    const fromDate=p.urgency<0?today():p.dueDate.toISOString().slice(0,10);
-    const best=aiFindBestDate(p.cust.id,fromDate,MAX_PLAN_DAYS);
-    if(!best)return;
-    const work=WORK_TYPES.filter(w=>w.id==='glasbuiten').map(w=>w.id);
-    const job={id:uid(),custId:p.cust.id,date:best.date,time:'09:00',status:'gepland',work,mats:[],notes:'Automatisch ingepland door AI',created:new Date().toISOString()};
-    jobs.push(job);count++;
+  const startAddr=settings.homeAddress||'';
+
+  // Filter dubbelen eruit (klant heeft al gepland/concept op deze dag)
+  const toplan=customers.filter(p=>{
+    const custId=p.cust?.id||p.id;
+    return custId&&!jobs.some(j=>j.custId===custId&&j.status!=='afgerond'&&j.date===date);
   });
-  saveAll();toast(`✅ ${count} klussen automatisch ingepland!`);render();
+  if(!toplan.length)return 0;
+
+  // ── Route-optimalisatie ingebouwd: nearest-neighbor vanuit thuisbasis
+  const routeSorted=_routeSortCustomers(toplan,startAddr);
+
+  // ── Tijdslots op basis van reistijd + geschatte klusuur
+  const START_MIN=7*60; // 07:00
+  const JOB_MIN=45;     // gem. klusduur glasbuiten
+  let curMin=START_MIN;
+  let curAddr=startAddr;
+
+  routeSorted.forEach(p=>{
+    const custId=p.cust?.id||p.id;
+    const addr=p.cust?.address||'';
+    const reisMin=curAddr?travelMin(curAddr,addr):0;
+    curMin+=reisMin;
+    const time=_minsToTime(curMin);
+    // Gebruik werktypen van de meest recente afgeronde klus van deze klant
+    const lastDone=jobs.filter(j=>j.custId===custId&&j.status==='afgerond'&&(j.work||[]).length)
+      .sort((a,b)=>b.date.localeCompare(a.date))[0];
+    const work=(lastDone?.work)||['glasbuiten'];
+    jobs.push({
+      id:uid(),custId,date,time,
+      status:'gepland',
+      work,mats:[],
+      notes:'📍 AI — wijk + route',
+      created:new Date().toISOString()
+    });
+    curMin+=JOB_MIN;
+    curAddr=addr;
+    count++;
+  });
+  return count;
+}
+
+function acceptDagPlan(dagIndex){
+  const plan=aiPlanByWijk();
+  const dag=plan[dagIndex];
+  if(!dag)return;
+  const count=_planCustomersOnDate(dag.customers,dag.date);
+  saveAll();
+  if(count>0){
+    toast(`✅ ${count} klussen ingepland + route geoptimaliseerd!`);
+    // Spring direct naar route-weergave voor deze dag
+    S.aiRouteDate=dag.date;
+    nav('ai','route');
+  } else {
+    toast('Al ingepland voor deze dag');render();
+  }
+}
+
+function acceptWijkPlan(){
+  const plan=aiPlanByWijk();
+  let total=0;
+  plan.forEach(dag=>{total+=_planCustomersOnDate(dag.customers,dag.date);});
+  saveAll();
+  if(total>0){
+    toast(`✅ ${total} klussen verdeeld over ${plan.length} dagen — routes geoptimaliseerd!`);
+    // Spring naar route-weergave van eerste ingeplande dag
+    if(plan.length>0){S.aiRouteDate=plan[0].date;nav('ai','route');}
+    else render();
+  } else {
+    toast('Niets nieuws ingepland');render();
+  }
 }
 
 function applyRoute(dateStr){
   const result=aiOptimizeRoute(dateStr);
-  result.route.forEach((r,i)=>{
+  if(!result.route.length)return;
+  // Bereken tijdslots op basis van reistijd (zelfde logica als _planCustomersOnDate)
+  const START_MIN=7*60;
+  const JOB_MIN=45;
+  let curMin=START_MIN;
+  let curAddr=settings.homeAddress||'';
+  result.route.forEach(r=>{
     const j=getJob(r.job.id);
-    if(j){const h=8+Math.floor(i*1.5);j.time=`${String(h).padStart(2,'0')}:${i%2===0?'00':'30'}`;}
+    const c=getCust(r.job.custId);
+    const addr=c?.address||'';
+    const reisMin=curAddr?travelMin(curAddr,addr):0;
+    curMin+=reisMin;
+    if(j)j.time=_minsToTime(curMin);
+    curMin+=JOB_MIN;
+    curAddr=addr;
   });
-  saveAll();toast('✅ Volgorde opgeslagen!');nav('dashboard');
+  saveAll();toast('✅ Route opgeslagen — tijden bijgewerkt!');
 }
 
 function toggleAvail(worker,dateStr,currentOn){
@@ -6651,13 +6961,14 @@ function showCompletionModal(jobId){
   let waBlock='';
   if(c?.phone){
     const naam=firstName(c.name);
-    const bedrijf=settings.w1Name||'CleanSoft';
+    const afzender=currentUser?.name||(settings.w1Name||'CleanSoft');
     const freq=c.frequency&&c.frequency!=='none';
     const freqDays=FREQ_DAYS[c.frequency]||0;
     const volgende=freq&&j.date?fmtLong(addDays(j.date,freqDays)):'';
+    const werkOmschr=(j.work&&j.work.length)?j.work.map(wid=>{const wt=WORK_TYPES.find(x=>x.id===wid);return wt?wt.lbl:'';}).filter(Boolean).join(', '):'glazenwassen';
     _complWa={
       phone:fmtWaPhone(c.phone),
-      msg:'Hallo '+naam+'! 😊\n\nJe glazen zijn vandaag gewassen — klaar! ✨🪟\n'+(volgende?'\nVolgende beurt: '+volgende+'\n':'')+'\nBedankt voor je vertrouwen!\n— '+bedrijf
+      msg:'Hallo '+naam+'! 😊\n\nJe '+werkOmschr+' is vandaag gedaan — klaar! ✨🪟'+(volgende?'\n\nVolgende beurt: '+volgende:'')+'\n\nBedankt voor je vertrouwen!\n— '+afzender
     };
     waBlock=`<button class="compl-wa-btn" onclick="sendComplWa()" style="margin-bottom:14px">
       <span style="font-size:22px">💬</span>
@@ -6668,6 +6979,7 @@ function showCompletionModal(jobId){
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2.5" style="margin-left:auto;flex-shrink:0"><path d="M9 18l6-6-6-6"/></svg>
     </button>`;
   }
+
 
   showModal(`
     <div class="modal-title">✅ Klus afgerond!</div>
