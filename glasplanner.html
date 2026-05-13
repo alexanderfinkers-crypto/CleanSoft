@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
@@ -308,7 +308,7 @@ a.ir-val{color:var(--primary);text-decoration:none}
 .insight-val{font-size:14px;font-weight:700;color:var(--primary)}
 
 /* Modal overlay */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:flex-end;backdrop-filter:blur(4px);display:none}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:flex-end;backdrop-filter:blur(4px)}
 .modal-sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-height:90vh;overflow-y:auto;padding:8px 18px calc(24px + env(safe-area-inset-bottom,0px));animation:sheetUp .28s cubic-bezier(.34,1.56,.64,1)}
 .modal-handle{width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 16px}
 @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
@@ -494,6 +494,8 @@ let settings={
   homeAddress:'',homePostcode:'',
   hourlyRate:45,maxJobsPerDay:5,dagDoel:250,
   w1Name:'Ik',w2Name:'Collega',
+  w1Phone:'',w2Phone:'',
+  morgenNotifTime:'20:00',
   ownerPin:'1234',workerPin:'0000',
   syncId:null,syncEnabled:true,lastSync:null,
   claudeApiKey:'',googleReviewUrl:'',googleClientId:'942694953878-g7erg0uuqc7hjiv8abe4jnvfdn3dm9si.apps.googleusercontent.com',
@@ -1253,7 +1255,14 @@ function render(){
   const lb=document.getElementById('hdr-logout-btn');if(lb)lb.style.display='flex';
   // Content
   const _viewFns={dashboard:()=>renderDashboard(rems),job:renderJobDetail,customers:()=>renderCustomers(rems),customer:renderCustDetail,editcustomer:renderCustForm,new:renderNewJob,ai:()=>renderAI(pending),settings:renderSettings};
-  m.innerHTML=(_viewFns[S.view]||_viewFns.dashboard)();
+  try{
+    m.innerHTML=(_viewFns[S.view]||_viewFns.dashboard)();
+  } catch(err){
+    console.error('Render fout in view',S.view,err);
+    // Fallback: terug naar dashboard zodat de app bruikbaar blijft
+    S.view='dashboard';S.aiTab='hub';
+    try{m.innerHTML=renderDashboard(rems);}catch(e2){m.innerHTML='<div style="padding:20px;color:red">Laadprobleem — ververs de pagina (F5)</div>';}
+  }
   if(S.view==='customers'&&S.custView==='map')setTimeout(initCustMap,80);
   if(S.view==='dashboard'){setTimeout(loadWeather,50);if(gCalConnected()&&!_gCalEvents.length&&!_gCalFetching)loadGCalEvents().then(()=>render());}
   if(S.view==='job'){const j=getJob(S.jobId);if(j&&j.timerStart&&!j.timerEnd)startLiveTimer(S.jobId);}
@@ -1321,6 +1330,7 @@ function pinConfirm(){
     // Auto-sync bij inloggen: haal altijd data op uit Firebase als beschikbaar
     const _doLogin=()=>{
       render();
+      scheduleMorgenNotif();
       setTimeout(()=>toast('Welkom, '+currentUser.name+'! 👋'),200);
       if(window._fb){
         // Worker: altijd verbinden; Owner: verbinden als syncEnabled
@@ -1328,7 +1338,7 @@ function pinConfirm(){
           settings.syncEnabled=true;
           saveLocalOnly();
           startFirestoreListener();
-          pullFromCloud(true).then(ok=>{if(ok){render();toast('🔄 Data gesynchroniseerd!');}});
+          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();toast('🔄 Data gesynchroniseerd!');}});
         }
       }
     };
@@ -1383,6 +1393,38 @@ function renderDashboard(rems){
         </div>`;
       }).join('')}
     </div>`;
+  }
+
+  // ── Avond-routemelding banner (automatisch of na klik)
+  if(S.tab==='vandaag'||S.tab==='morgen'){
+    const morgenDs=addDays(today(),1);
+    const morgenJobs=jobs.filter(j=>j.date===morgenDs&&j.status!=='afgerond');
+    const nowH=new Date().getHours();
+    const toonBanner=morgenJobs.length>0&&!S._morgenDismissed&&(nowH>=15||_pendingMorgenMsg);
+    if(toonBanner){
+      const isAvond=nowH>=18;
+      const w2has=!!(settings.w2Phone);
+      h+=`<div style="background:${isAvond?'linear-gradient(135deg,#0f172a,#1e3a5f)':'var(--primary-light)'};border:2px solid var(--primary);border-radius:14px;padding:14px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <div style="font-size:13px;font-weight:800;color:${isAvond?'#fff':'var(--primary)'}">📋 Route morgen — ${morgenJobs.length} klus${morgenJobs.length!==1?'sen':''}</div>
+            <div style="font-size:11px;color:${isAvond?'rgba(255,255,255,.65)':'var(--text-muted)'};margin-top:2px">${fmtLong(morgenDs)}</div>
+          </div>
+          <button onclick="S._morgenDismissed=true;render()" style="background:none;border:none;font-size:18px;cursor:pointer;opacity:.5;padding:4px">×</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" onclick="stuurMorgenRoute()" style="background:var(--primary);color:#fff;border:none;flex:1;min-width:120px">
+            📲 ${navigator.share?'Delen':'Stuur naar mij'}
+          </button>
+          ${w2has?`<button class="btn btn-sm" onclick="stuurMorgenRouteNaarCollega()" style="background:#25d366;color:#fff;border:none;flex:1;min-width:120px">
+            💬 Naar ${esc(settings.w2Name||'collega')}
+          </button>`:''}
+          <button class="btn btn-sm btn-ghost" onclick="S.aiRouteDate='${morgenDs}';nav('ai','route')" style="flex:1;min-width:100px">
+            🗺️ Route bekijken
+          </button>
+        </div>
+      </div>`;
+    }
   }
 
   if(S.tab==='vandaag'&&rems.length){
@@ -2672,6 +2714,21 @@ function renderSettings(){
         <div class="grid2">
           <div class="form-group"><label class="form-label">Naam medewerker 1</label><input class="form-control" id="st-w1" type="text" value="${esc(settings.w1Name)}" placeholder="Ik"></div>
           <div class="form-group"><label class="form-label">Naam medewerker 2</label><input class="form-control" id="st-w2" type="text" value="${esc(settings.w2Name)}" placeholder="Collega"></div>
+          <div class="form-group"><label class="form-label">WhatsApp nr. medewerker 1</label><input class="form-control" id="st-w1phone" type="tel" value="${esc(settings.w1Phone||'')}" placeholder="0612345678"></div>
+          <div class="form-group"><label class="form-label">WhatsApp nr. medewerker 2</label><input class="form-control" id="st-w2phone" type="tel" value="${esc(settings.w2Phone||'')}" placeholder="0612345678"></div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">📲 Avond-routeoverzicht</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">Stuur elke avond automatisch een WhatsApp-samenvatting van de volgende dag naar jezelf en je collega. Stel het tijdstip in waarop je de melding wilt krijgen.</div>
+        <div class="form-group" style="margin-bottom:8px"><label class="form-label">Meldingstijdstip</label>
+          <input class="form-control" id="st-notifTime" type="time" value="${esc(settings.morgenNotifTime||'20:00')}">
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:4px">
+          <button class="btn btn-ghost" style="flex:1;font-size:12px" onclick="requestNotificationPermission().then(()=>toast('✅ Meldingen ingeschakeld!'))">
+            🔔 ${typeof Notification!=='undefined'&&Notification.permission==='granted'?'Meldingen aan ✓':'Meldingen inschakelen'}
+          </button>
+          <button class="btn btn-ghost" style="flex:1;font-size:12px" onclick="stuurMorgenRoute()">📲 Nu sturen (test)</button>
         </div>
       </div>
       <div class="settings-section">
@@ -6837,6 +6894,9 @@ function saveSettings(){
   if(gclient)settings.googleClientId=gclient;
   settings.w1Name=document.getElementById('st-w1')?.value?.trim()||'Ik';
   settings.w2Name=document.getElementById('st-w2')?.value?.trim()||'Collega';
+  settings.w1Phone=(document.getElementById('st-w1phone')?.value||'').trim().replace(/\s/g,'');
+  settings.w2Phone=(document.getElementById('st-w2phone')?.value||'').trim().replace(/\s/g,'');
+  settings.morgenNotifTime=(document.getElementById('st-notifTime')?.value||'20:00');
   const apikey=(document.getElementById('st-apikey')?.value||'').trim();
   if(apikey)settings.claudeApiKey=apikey;
   settings.googleReviewUrl=(document.getElementById('st-review')?.value||'').trim();
@@ -6846,7 +6906,9 @@ function saveSettings(){
   if(wpin.length===4&&/^\d{4}$/.test(wpin))settings.workerPin=wpin;
   availability.w1.name=settings.w1Name;
   availability.w2.name=settings.w2Name;
-  saveAll();toast('✅ Instellingen opgeslagen');nav('ai');
+  saveAll();
+  scheduleMorgenNotif(); // herplan notificatie als tijdstip veranderd is
+  toast('✅ Instellingen opgeslagen');nav('ai');
 }
 
 function resetApp(){
@@ -7548,6 +7610,134 @@ function showInstallPrompt(){
 }
 
 // ════════════════════════════════════════════════
+//  MORGEN-ROUTE OVERZICHT & AVONDMELDING
+// ════════════════════════════════════════════════
+function buildMorgenRouteMsg(dateStr){
+  const ds=dateStr||addDays(today(),1);
+  const dayJobs=jobs.filter(j=>j.date===ds&&j.status!=='afgerond')
+    .sort((a,b)=>(a.time||'99:99').localeCompare(b.time||'99:99'));
+  if(!dayJobs.length)return null;
+
+  // Optimaliseer volgorde (route-algoritme)
+  const result=aiOptimizeRoute(ds);
+  const ordered=result.route.length?result.route.map(r=>r.job):dayJobs;
+
+  const dateLbl=fmtLong(ds);
+  const bedrijf=settings.w1Name||'CleanSoft';
+  let msg=`📋 Route ${dateLbl}\n\n`;
+
+  let curAddr=settings.homeAddress||'';
+  let curTime=null;
+  ordered.forEach((job,i)=>{
+    const c=getCust(job.custId);if(!c)return;
+    const reisMin=curAddr?travelMin(curAddr,c.address):0;
+    const timeStr=job.time||'';
+    // Bereken verwachte aankomsttijd als er tijden zijn
+    if(timeStr){
+      curTime=timeStr;
+    } else if(curTime&&reisMin>0){
+      const [hh,mm]=curTime.split(':').map(Number);
+      const tot=hh*60+mm+45+reisMin; // 45 min per klus
+      curTime=`${String(Math.floor(tot/60)).padStart(2,'0')}:${String(tot%60).padStart(2,'0')}`;
+    }
+    if(reisMin>0&&i>0)msg+=`  🚗 ~${reisMin} min\n`;
+    msg+=`${curTime?curTime+' — ':''}${c.name}\n`;
+    msg+=`  📍 ${c.address}\n`;
+    curAddr=c.address;
+  });
+
+  const totRev=ordered.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+  msg+=`\n${ordered.length} klus${ordered.length!==1?'sen':''}`+(totRev>0?` · €${totRev}`:'')+
+       (result.totalKm?` · ~${result.totalKm} km`:'')+
+       `\n— ${bedrijf}`;
+  return msg;
+}
+
+function stuurMorgenRoute(dateStr){
+  const ds=dateStr||addDays(today(),1);
+  const msg=buildMorgenRouteMsg(ds);
+  if(!msg){toast('Geen klussen morgen gevonden');return;}
+
+  // Gebruik Web Share API (native share sheet → WhatsApp, SMS, kopiëren, etc.)
+  if(navigator.share){
+    navigator.share({title:'Route '+(dateStr||'morgen'),text:msg}).catch(()=>{});
+    return;
+  }
+  // Fallback: stuur via WhatsApp (nummer uit instellingen of open keuze)
+  const phone=fmtWaPhone(settings.w1Phone||'');
+  if(phone){
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(msg),'_blank');
+  } else {
+    // Geen nummer: kopieer naar klembord
+    navigator.clipboard?.writeText(msg).then(()=>toast('📋 Route gekopieerd naar klembord!')).catch(()=>{});
+    showModal(`<div class="modal-title">📋 Route morgen</div>
+      <pre style="font-size:12px;white-space:pre-wrap;background:var(--bg);border-radius:10px;padding:12px;margin-bottom:16px;color:var(--text);line-height:1.6">${esc(msg)}</pre>
+      <button class="btn btn-primary btn-block" onclick="navigator.clipboard?.writeText(${JSON.stringify(msg)}).then(()=>toast('Gekopieerd!'));closeModal()">📋 Kopiëren</button>
+      ${settings.w2Phone?`<button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="window.open('https://wa.me/${fmtWaPhone(settings.w2Phone)}?text='+encodeURIComponent(${JSON.stringify(msg)}),'_blank');closeModal()">💬 Stuur naar ${esc(settings.w2Name||'collega')}</button>`:''}
+      <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="closeModal()">Sluiten</button>
+    `);
+  }
+}
+
+function stuurMorgenRouteNaarCollega(dateStr){
+  const ds=dateStr||addDays(today(),1);
+  const msg=buildMorgenRouteMsg(ds);
+  if(!msg){toast('Geen klussen gevonden');return;}
+  const phone=fmtWaPhone(settings.w2Phone||'');
+  if(phone){
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(msg),'_blank');
+  } else {
+    toast('Voer eerst het WhatsApp-nummer van je collega in bij Instellingen');
+  }
+}
+
+let _morgenNotifTimer=null;
+function scheduleMorgenNotif(){
+  clearTimeout(_morgenNotifTimer);
+  if(!settings.morgenNotifTime)return;
+  const [hStr,mStr]=settings.morgenNotifTime.split(':');
+  const now=new Date();
+  const fire=new Date();
+  fire.setHours(parseInt(hStr)||20,parseInt(mStr)||0,0,0);
+  if(fire<=now)return; // al voorbij vandaag
+  const ms=fire-now;
+  _morgenNotifTimer=setTimeout(()=>{
+    _fireMorgenNotif();
+  },ms);
+}
+
+function _fireMorgenNotif(){
+  const tomorrow=addDays(today(),1);
+  const morgenJobs=jobs.filter(j=>j.date===tomorrow&&j.status!=='afgerond');
+  if(!morgenJobs.length)return;
+  const msg=buildMorgenRouteMsg(tomorrow);
+  if(!msg)return;
+
+  // Browser-notificatie (als toestemming gegeven)
+  if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
+    try{
+      const n=new Notification('📋 Route morgen — '+morgenJobs.length+' klussen',{
+        body:morgenJobs.slice(0,3).map(j=>{const c=getCust(j.custId);return(j.time?j.time+' ':'')+c?.name;}).join(' · '),
+        icon:'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'%3E%3Crect width=\'192\' height=\'192\' rx=\'38\' fill=\'%230066bb\'/%3E%3Ctext y=\'130\' x=\'96\' text-anchor=\'middle\' font-size=\'120\' fill=\'white\'%3E🪟%3C/text%3E%3C/svg%3E',
+        tag:'morgen-route',
+        renotify:true
+      });
+      n.onclick=()=>{window.focus();nav('dashboard');setTab('morgen');};
+    }catch(e){}
+  }
+
+  // Stuur automatisch WhatsApp als nummers ingevuld zijn
+  // (opent WhatsApp — gebruiker moet nog handmatig versturen)
+  // We tonen een in-app banner zodat de gebruiker kan kiezen
+  _pendingMorgenMsg=msg;
+  _pendingMorgenDate=tomorrow;
+  render(); // herrender zodat de banner verschijnt
+}
+
+let _pendingMorgenMsg=null;
+let _pendingMorgenDate=null;
+
+// ════════════════════════════════════════════════
 //  PUSH NOTIFICATIES
 // ════════════════════════════════════════════════
 async function requestNotificationPermission(){
@@ -7601,6 +7791,9 @@ loadAll();
 try{const su=JSON.parse(sessionStorage.getItem('gp_user')||'null');if(su&&su.role)currentUser=su;}catch(e){}
 setupPWA();
 initDark();
+// Zorg altijd dat modal gesloten is bij opstarten
+(function(){const mo=document.getElementById('modal-overlay');if(mo)mo.style.display='none';})();
+scheduleMorgenNotif();
 
 // ── Web Share Target: afhandelen van gedeelde content (mail/WhatsApp)
 (function handleShareTarget(){
@@ -7656,7 +7849,7 @@ checkRemindersAndNotify();
 if(settings.syncEnabled){
   window.addEventListener('fb-ready',()=>{
     startFirestoreListener();
-    pullFromCloud(true).then(ok=>{if(ok)render();});
+    pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();}});
   },{once:true});
 }
 </script>
