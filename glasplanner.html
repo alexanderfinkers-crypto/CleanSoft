@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
@@ -1946,7 +1946,7 @@ function renderCustomers(rems){
 
   <div style="display:flex;gap:8px;margin-bottom:14px">
     <button class="btn btn-primary" style="flex:1" onclick="nav('editcustomer',null)">+ Nieuwe klant</button>
-    <button class="btn btn-ghost" onclick="exportCustomersCSV()" style="flex-shrink:0">⬇️ CSV</button>
+    <button class="btn btn-ghost" onclick="exportCustomersExcel()" style="flex-shrink:0">⬇️ Excel</button>
   </div>`;
 
   if(!filtered.length)return h+emptyState('👥','Geen klanten','Geen klanten gevonden voor deze filter');
@@ -6505,20 +6505,222 @@ function exportICS(){
   toast('📅 Kalenderbestand gedownload ('+future.length+' klussen)');
 }
 
-function exportCustomersCSV(){
+async function exportCustomersExcel(){
+  toast('⏳ Excel wordt aangemaakt…');
+  if(!window.ExcelJS){
+    try{
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('CDN niet bereikbaar'));
+        document.head.appendChild(s);
+      });
+    }catch(e){toast('❌ Kan ExcelJS niet laden — controleer internet');return;}
+  }
+  const wb=new ExcelJS.Workbook();
+  wb.creator='CleanSoft Glasplanner';wb.created=new Date();
   const byC=_buildJobsByCust();
-  const cols=['Naam','Adres','Telefoon','Prijs','Frequentie','Notities','Klussen','Afgerond','Omzet'];
-  const rows=customers.map(c=>{
+  const td=today();
+  const thisMonth=td.slice(0,7);
+  const thisYear=td.slice(0,4);
+  const P={
+    hdrBg:'FF1E3A5F',hdrFg:'FFFFFFFF',
+    titleBg:'FFDBEAFE',titleFg:'FF1E3A5F',
+    rowAlt:'FFF8FAFC',rowWhite:'FFFFFFFF',
+    rowOrange:'FFFFF7ED',rowGreen:'FFF0FDF4',
+    rowBlue:'FFEFF6FF',rowYellow:'FFFEFCE8',
+    accent:'FF2563EB',success:'FF16A34A',
+    warning:'FFD97706',border:'FFE2E8F0',
+    gold:'FFFEF08A',silver:'FFF1F5F9',bronze:'FFFEF3C7',
+  };
+  const applyHdr=(row,bg=P.hdrBg)=>{
+    row.height=26;
+    row.eachCell(cell=>{
+      cell.font={bold:true,color:{argb:P.hdrFg},size:11,name:'Calibri'};
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};
+      cell.alignment={horizontal:'center',vertical:'middle'};
+      cell.border={bottom:{style:'medium',color:{argb:P.accent}},left:{style:'thin',color:{argb:P.border}},right:{style:'thin',color:{argb:P.border}}};
+    });
+  };
+  const applyTitle=(ws,txt,ncols,bg=P.titleBg,fg=P.titleFg)=>{
+    const endCol=String.fromCharCode(64+ncols);
+    ws.mergeCells('A1:'+endCol+'1');
+    const c=ws.getCell('A1');
+    c.value=txt;c.font={bold:true,size:14,color:{argb:fg},name:'Calibri'};
+    c.alignment={horizontal:'center',vertical:'middle'};
+    c.fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};
+    ws.getRow(1).height=34;
+  };
+  const styleRow=(row,bgArgb)=>{
+    row.height=20;
+    row.eachCell(cell=>{
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:bgArgb}};
+      cell.border={bottom:{style:'hair',color:{argb:P.border}},right:{style:'hair',color:{argb:P.border}}};
+      cell.alignment={vertical:'middle'};
+    });
+  };
+  // ── TABBLAD 1: KLANTEN ──
+  const ws1=wb.addWorksheet('Klanten',{views:[{state:'frozen',ySplit:2}]});
+  ws1.columns=[
+    {key:'naam',width:26},{key:'adres',width:36},{key:'telefoon',width:16},
+    {key:'freq',width:15},{key:'prijs',width:13},{key:'totaal',width:10},
+    {key:'afgerond',width:11},{key:'open',width:12},{key:'omzet',width:13},
+    {key:'laatste',width:14},{key:'notities',width:30},
+  ];
+  applyTitle(ws1,'Klantenexport — CleanSoft  ('+td+')',11);
+  applyHdr(ws1.addRow(['Naam','Adres','Telefoon','Frequentie','Klantprijs','Klussen','Afgerond','Openstaand','Omzet','Laatste klus','Notities']));
+  customers.forEach((c,ci)=>{
     const cj=byC.get(c.id)||[];
     const done=cj.filter(j=>j.status==='afgerond');
-    const rev=done.length*(c.price||0);
-    return[c.name,c.address,c.phone||'',c.price||'',FREQS[c.frequency]||'',c.notes||'',cj.length,done.length,rev];
+    const open=cj.filter(j=>j.status!=='afgerond');
+    const rev=done.reduce((s,j)=>s+getJobRevenue(j),0);
+    const lastJob=[...done].sort((a,b)=>b.date.localeCompare(a.date))[0];
+    let isOverdue=false;
+    if(c.frequency&&c.frequency!=='none'&&lastJob){
+      const noFuture=!jobs.some(j=>j.custId===c.id&&j.status!=='afgerond'&&j.date>=td);
+      isOverdue=noFuture&&addDays(lastJob.date,FREQ_DAYS[c.frequency]||0)<td;
+    }
+    const r=ws1.addRow([
+      c.name,c.address,c.phone||'',FREQS[c.frequency]||'Eenmalig',
+      c.price||0,cj.length,done.length,open.length,rev,
+      lastJob?lastJob.date:'',c.notes||''
+    ]);
+    styleRow(r,isOverdue?P.rowOrange:ci%2===0?P.rowAlt:P.rowWhite);
+    r.getCell(5).numFmt='€#,##0.00';r.getCell(9).numFmt='€#,##0.00';
+    if(isOverdue){r.getCell(1).font={bold:true,color:{argb:P.warning}};r.getCell(1).value='⚠ '+c.name;}
+    else if(rev>=500)r.getCell(1).font={bold:true,color:{argb:P.success}};
+    if(rev>0)r.getCell(9).font={bold:rev>=500,color:{argb:rev>=500?P.success:P.accent}};
   });
-  const csv=[cols,...rows].map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
-  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='klanten-'+today()+'.csv';a.click();
-  toast('⬇️ CSV gedownload');
+  const lastR1=ws1.lastRow.number;
+  const tot1=ws1.addRow(['TOTAAL','','','',
+    {formula:'SUM(E3:E'+lastR1+')'},{formula:'SUM(F3:F'+lastR1+')'},
+    {formula:'SUM(G3:G'+lastR1+')'},{formula:'SUM(H3:H'+lastR1+')'},
+    {formula:'SUM(I3:I'+lastR1+')'},'','']);
+  tot1.height=22;
+  tot1.eachCell(cell=>{cell.font={bold:true,size:11,color:{argb:P.hdrFg}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:P.hdrBg}};cell.alignment={vertical:'middle',horizontal:'center'};});
+  tot1.getCell(5).numFmt='€#,##0.00';tot1.getCell(9).numFmt='€#,##0.00';
+  ws1.addConditionalFormatting({ref:'I3:I'+lastR1,rules:[{type:'dataBar',cfvo:[{type:'min'},{type:'max'}],color:{argb:P.accent}}]});
+  ws1.autoFilter={from:{row:2,column:1},to:{row:2,column:11}};
+  // ── TABBLAD 2: OMZET ──
+  const ws2=wb.addWorksheet('Omzet',{views:[{state:'frozen',ySplit:2}]});
+  ws2.columns=[
+    {key:'rang',width:7},{key:'naam',width:26},{key:'afgerond',width:17},
+    {key:'omzet',width:15},{key:'gem',width:15},{key:'freq',width:17},
+  ];
+  applyTitle(ws2,'Omzet per klant — '+td,6,'FFD1FAE5','FF065F46');
+  applyHdr(ws2.addRow(['#','Klant','Afgeronde klussen','Totale omzet','Gem. per klus','Frequentie']),'FF065F46');
+  const custRev=customers.map(c=>{
+    const cj=byC.get(c.id)||[];
+    const done=cj.filter(j=>j.status==='afgerond');
+    return{c,done:done.length,rev:done.reduce((s,j)=>s+getJobRevenue(j),0)};
+  }).sort((a,b)=>b.rev-a.rev);
+  custRev.forEach(({c,done,rev},i)=>{
+    const gem=done>0?Math.round(rev/done*100)/100:0;
+    const medal=i===0?'#1':i===1?'#2':i===2?'#3':String(i+1);
+    const r=ws2.addRow([medal,c.name,done,rev,gem,FREQS[c.frequency]||'Eenmalig']);
+    styleRow(r,i===0?P.gold:i===1?P.silver:i===2?P.bronze:i%2===0?P.rowAlt:P.rowWhite);
+    r.getCell(4).numFmt='€#,##0.00';r.getCell(5).numFmt='€#,##0.00';
+    if(i<3){r.getCell(1).font={bold:true,size:12};r.getCell(2).font={bold:true,size:i===0?13:11};}
+  });
+  const lastR2=ws2.lastRow.number;
+  const tot2=ws2.addRow(['','TOTAAL',custRev.reduce((s,x)=>s+x.done,0),custRev.reduce((s,x)=>s+x.rev,0),'','']);
+  tot2.height=22;
+  tot2.eachCell(cell=>{cell.font={bold:true,color:{argb:P.hdrFg}};cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF065F46'}};cell.alignment={vertical:'middle',horizontal:'center'};});
+  tot2.getCell(4).numFmt='€#,##0.00';
+  ws2.addConditionalFormatting({ref:'D3:D'+lastR2,rules:[{type:'dataBar',cfvo:[{type:'min'},{type:'max'}],color:{argb:P.success}}]});
+  ws2.addConditionalFormatting({ref:'E3:E'+lastR2,rules:[{type:'colorScale',cfvo:[{type:'min'},{type:'percentile',value:50},{type:'max'}],color:[{argb:'FFFFF1F2'},{argb:'FFFEF9C3'},{argb:'FFF0FDF4'}]}]});
+  ws2.autoFilter={from:{row:2,column:1},to:{row:2,column:6}};
+  // ── TABBLAD 3: KLUSSEN ──
+  const ws3=wb.addWorksheet('Klussen',{views:[{state:'frozen',ySplit:2}]});
+  ws3.columns=[
+    {key:'datum',width:14},{key:'klant',width:26},{key:'adres',width:30},
+    {key:'werk',width:30},{key:'status',width:14},{key:'prijs',width:12},
+    {key:'tijd',width:8},{key:'notities',width:28},
+  ];
+  applyTitle(ws3,'Klussen historiek — CleanSoft ('+td+')',8,'FFF3E8FF','FF6D28D9');
+  applyHdr(ws3.addRow(['Datum','Klant','Adres','Werkzaamheden','Status','Prijs','Tijd','Notities']),'FF6D28D9');
+  const sLbl={afgerond:'Afgerond',onderweg:'Onderweg',gepland:'Gepland',concept:'Concept'};
+  const sBg={afgerond:P.rowGreen,onderweg:P.rowBlue,gepland:P.rowBlue,concept:P.rowYellow};
+  [...jobs].sort((a,b)=>b.date.localeCompare(a.date)).forEach((j,i)=>{
+    const c=getCust(j.custId);
+    const r=ws3.addRow([j.date,c?c.name:'—',c?c.address:'',workLbl(j.work||[]).join(', ')||'—',sLbl[j.status]||j.status,getJobRevenue(j)||0,j.time||'',j.notes||'']);
+    styleRow(r,sBg[j.status]||(i%2===0?P.rowAlt:P.rowWhite));
+    r.getCell(6).numFmt='€#,##0.00';
+  });
+  if(ws3.lastRow.number>2){
+    ws3.addConditionalFormatting({ref:'F3:F'+ws3.lastRow.number,rules:[{type:'dataBar',cfvo:[{type:'min'},{type:'max'}],color:{argb:'FF7C3AED'}}]});
+  }
+  ws3.autoFilter={from:{row:2,column:1},to:{row:2,column:8}};
+  // ── TABBLAD 4: STATISTIEKEN ──
+  const ws4=wb.addWorksheet('Statistieken');
+  ws4.columns=[{width:32},{width:18},{width:16},{width:14},{width:14},{width:14}];
+  applyTitle(ws4,'Bedrijfsstatistieken — CleanSoft  '+td,6,'FFFEF3C7','FF92400E');
+  const kSec=(lbl,bg='FFDBEAFE',fg='FF1E3A5F')=>{
+    const r=ws4.addRow([lbl]);
+    ws4.mergeCells('A'+r.number+':F'+r.number);
+    r.getCell(1).font={bold:true,size:12,color:{argb:fg}};
+    r.getCell(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};
+    r.getCell(1).alignment={horizontal:'left',vertical:'middle'};
+    r.height=24;
+  };
+  const kRow=(lbl,val,fmtEuro=false,note='')=>{
+    const r=ws4.addRow([lbl,val,note]);r.height=20;
+    r.getCell(1).font={size:11};r.getCell(1).alignment={vertical:'middle'};
+    r.getCell(2).font={bold:true,size:12,color:{argb:P.accent}};r.getCell(2).alignment={vertical:'middle',horizontal:'right'};
+    if(note){r.getCell(3).font={size:10,color:{argb:'FF94A3B8'}};r.getCell(3).alignment={vertical:'middle'};}
+    if(fmtEuro)r.getCell(2).numFmt='€#,##0.00';
+    [1,2,3].forEach(i=>{r.getCell(i).fill={type:'pattern',pattern:'solid',fgColor:{argb:P.rowWhite}};r.getCell(i).border={bottom:{style:'hair',color:{argb:P.border}}};});
+  };
+  const afg=jobs.filter(j=>j.status==='afgerond');
+  const totRev=afg.reduce((s,j)=>s+getJobRevenue(j),0);
+  const maandJ=afg.filter(j=>j.date.startsWith(thisMonth));
+  const jaarJ=afg.filter(j=>j.date.startsWith(thisYear));
+  const metP=afg.filter(j=>getJobRevenue(j)>0);
+  const avgR=metP.length?Math.round(totRev/metP.length*100)/100:0;
+  kSec('Klanten');
+  kRow('Totaal klanten',customers.length);
+  kRow('Met vaste frequentie',customers.filter(c=>c.frequency&&c.frequency!=='none').length);
+  kRow('Eenmalig / geen frequentie',customers.filter(c=>!c.frequency||c.frequency==='none').length);
+  kRow('Met prijs ingesteld',customers.filter(c=>(c.price||0)>0||(c.prices||[]).length>0).length);
+  ws4.addRow([]).height=8;
+  kSec('Klussen','FFD1FAE5','FF065F46');
+  kRow('Totaal klussen',jobs.length);
+  kRow('Afgerond (totaal)',afg.length);
+  kRow('Openstaand / gepland',jobs.filter(j=>j.status!=='afgerond').length);
+  kRow('Afgerond deze maand ('+thisMonth+')',maandJ.length);
+  kRow('Afgerond dit jaar ('+thisYear+')',jaarJ.length);
+  ws4.addRow([]).height=8;
+  kSec('Omzet','FFD1FAE5','FF065F46');
+  kRow('Totale omzet (afgerond)',totRev,true);
+  kRow('Omzet deze maand',maandJ.reduce((s,j)=>s+getJobRevenue(j),0),true,thisMonth);
+  kRow('Omzet dit jaar',jaarJ.reduce((s,j)=>s+getJobRevenue(j),0),true,thisYear);
+  kRow('Gemiddelde omzet per klus',avgR,true,'(klussen met prijs)');
+  ws4.addRow([]).height=8;
+  kSec('Klanten per frequentie','FFFFF7ED','FF92400E');
+  const fHdr=ws4.addRow(['Frequentie','Aantal','Aandeel']);
+  fHdr.height=22;
+  [1,2,3].forEach(i=>{fHdr.getCell(i).font={bold:true,color:{argb:P.hdrFg}};fHdr.getCell(i).fill={type:'pattern',pattern:'solid',fgColor:{argb:P.hdrBg}};fHdr.getCell(i).alignment={horizontal:'center',vertical:'middle'};});
+  const fStart=ws4.lastRow.number+1;
+  const totC=customers.length||1;let fIdx=0;
+  Object.entries(FREQS).forEach(([key,lbl])=>{
+    const cnt=customers.filter(c=>(c.frequency||'none')===key).length;
+    if(!cnt)return;
+    const r=ws4.addRow([lbl,cnt,cnt/totC]);r.height=20;
+    const bg=fIdx%2===0?P.rowAlt:P.rowWhite;
+    [1,2,3].forEach(i=>{r.getCell(i).fill={type:'pattern',pattern:'solid',fgColor:{argb:bg}};r.getCell(i).border={bottom:{style:'hair',color:{argb:P.border}}};r.getCell(i).alignment={vertical:'middle',horizontal:i>1?'center':'left'};});
+    r.getCell(3).numFmt='0%';fIdx++;
+  });
+  const fEnd=ws4.lastRow.number;
+  if(fEnd>=fStart)ws4.addConditionalFormatting({ref:'B'+fStart+':B'+fEnd,rules:[{type:'dataBar',cfvo:[{type:'min'},{type:'max'}],color:{argb:P.accent}}]});
+  // ── Download ──
+  const buf=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='klanten-'+td+'.xlsx';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+  toast('✅ Excel gedownload — 4 tabbladen klaar!');
 }
 function setCustRegion(r){S.custRegion=r;render()}
 function setCustSort(s){S.custSort=s;render()}
