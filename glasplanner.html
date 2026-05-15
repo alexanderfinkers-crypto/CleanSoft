@@ -572,7 +572,7 @@ function seedDemo(){
     const key=(j.work||[]).sort().join(',');
     if(!aiModel.prices[key])aiModel.prices[key]=[];
     if(!aiModel.durations[key])aiModel.durations[key]=[];
-    if(c?.price)aiModel.prices[key].push(c.price);
+    const _jp=getJobRevenue(j);if(_jp>0)aiModel.prices[key].push(_jp);
     if(j.duration)aiModel.durations[key].push(j.duration);
     aiModel.totalDone++;
   });
@@ -584,6 +584,7 @@ function seedDemo(){
 // ════════════════════════════════════════════════
 let S={
   view:'dashboard',tab:'vandaag',calDay:null,
+  weekOffset:0,
   jobId:null,custId:null,
   preCustomer:null,custSearch:'',custRegion:'',custSort:'name',custView:'list',
   njAiDates:null,njChosenDate:'',njShowManual:false,
@@ -630,13 +631,47 @@ function postcodeDistance(pc1,pc2){
   const d=Math.abs(pc1-pc2);
   if(d===0)return 3;if(d<20)return 8;if(d<80)return 16;if(d<300)return 28;return 45;
 }
+// Hemelsbreed afstand via haversine (km)
+function haversineKm(lat1,lng1,lat2,lng2){
+  const R=6371,dLat=(lat2-lat1)*Math.PI/180,dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+// Synchrone lookup uit geocodeCache (geen API-call)
+function getCachedCoords(addr){
+  return (addr&&geocodeCache[addr])||null;
+}
+// Geocodeer op de achtergrond zonder te blokkeren
+function triggerGeocodeBackground(addr){
+  if(!addr||geocodeCache[addr])return;
+  geocodeAddress(addr);
+}
+// Reistijd in minuten: haversine als coords beschikbaar, anders postcode-fallback
 function travelMin(addr1,addr2){
+  const c1=getCachedCoords(addr1),c2=getCachedCoords(addr2);
+  if(c1&&c2){
+    const km=haversineKm(c1.lat,c1.lng,c2.lat,c2.lng);
+    return Math.round(km/40*60);
+  }
   return Math.round(postcodeDistance(extractPostcode(addr1),extractPostcode(addr2))/40*60);
 }
+// Zelfde buurt: ≤5 km hemelsbreed als coords beschikbaar, anders postcode-fallback
 function sameRegion(addr1,addr2){
+  const c1=getCachedCoords(addr1),c2=getCachedCoords(addr2);
+  if(c1&&c2)return haversineKm(c1.lat,c1.lng,c2.lat,c2.lng)<=5;
   const p1=extractPostcode(addr1),p2=extractPostcode(addr2);
   if(!p1||!p2)return false;
   return Math.abs(p1-p2)<200;
+}
+// Geocodeer alle klantadressen op de achtergrond (1 per 1,2s voor Nominatim rate-limit)
+async function warmGeocodeCache(){
+  const addrs=[...new Set(customers.map(c=>c.address).filter(a=>a&&!geocodeCache[a]))];
+  if(!addrs.length)return;
+  for(const addr of addrs){
+    if(geocodeCache[addr])continue;
+    await geocodeAddress(addr);
+    await new Promise(r=>setTimeout(r,1200));
+  }
 }
 
 // ════════════════════════════════════════════════
@@ -652,14 +687,15 @@ function aiSuggestPrice(custId,workTypes,date,qtys={}){
 
   // ══ ROUTE 1: klant heeft een vaste prijs ══
   // Eigen prijs is het meest betrouwbare signaal — NIET bijsturen met toeslagen of historische data.
-  if(cust?.price>0){
-    const base=cust.price;
-    notes.push(`Vaste klantprijs: €${base}`);
+  const _custDefaultPrice=getDefaultCustPrice(cust);
+  if(_custDefaultPrice>0){
+    const base=_custDefaultPrice;
+    notes.push(`Vaste klantprijs: €${base}`+(cust?.prices?.length>1?` (${cust.prices.length} pakketten)`:``));
 
     // Controleer of collega's in de buurt dichtbij zitten qua prijs (sanity-check)
-    const similar=customers.filter(c=>c.id!==custId&&c.price>0&&sameRegion(c.address,cust.address||''));
+    const similar=customers.filter(c=>c.id!==custId&&getDefaultCustPrice(c)>0&&sameRegion(c.address,cust.address||''));
     if(similar.length){
-      const avg=Math.round(similar.reduce((s,c)=>s+c.price,0)/similar.length);
+      const avg=Math.round(similar.reduce((s,c)=>s+getDefaultCustPrice(c),0)/similar.length);
       const pct=Math.round(Math.abs(base-avg)/avg*100);
       if(pct>40)notes.push(`Let op: buurtgemiddelde is €${avg} (${pct}% afwijking)`);
       else notes.push(`Buurtgemiddelde: €${avg} (${similar.length} klanten)`);
@@ -682,27 +718,27 @@ function aiSuggestPrice(custId,workTypes,date,qtys={}){
   let source='uurtarief';
 
   // ── Stap A: Vergelijkbare klanten in dezelfde regio (sterkste externe signaal)
-  const sameFreqSameRegio=customers.filter(c=>c.id!==custId&&c.price>0
+  const sameFreqSameRegio=customers.filter(c=>c.id!==custId&&getDefaultCustPrice(c)>0
     &&c.frequency===(cust?.frequency||null)&&sameRegion(c.address,cust?.address||''));
-  const sameRegio=customers.filter(c=>c.id!==custId&&c.price>0
+  const sameRegio=customers.filter(c=>c.id!==custId&&getDefaultCustPrice(c)>0
     &&sameRegion(c.address,cust?.address||''));
 
   if(sameFreqSameRegio.length>=2){
     // Mediaan in plaats van gemiddelde → robuuster tegen uitschieters
-    const sorted=[...sameFreqSameRegio].sort((a,b)=>a.price-b.price);
+    const sorted=[...sameFreqSameRegio].sort((a,b)=>getDefaultCustPrice(a)-getDefaultCustPrice(b));
     const mid=Math.floor(sorted.length/2);
-    base=sorted.length%2?sorted[mid].price:Math.round((sorted[mid-1].price+sorted[mid].price)/2);
+    base=sorted.length%2?getDefaultCustPrice(sorted[mid]):Math.round((getDefaultCustPrice(sorted[mid-1])+getDefaultCustPrice(sorted[mid]))/2);
     source='vergelijkbaar';
     notes.push(`Mediaan van ${sameFreqSameRegio.length} vergelijkbare klanten (zelfde wijk + frequentie): €${base}`);
   } else if(sameFreqSameRegio.length===1){
-    base=sameFreqSameRegio[0].price;
+    base=getDefaultCustPrice(sameFreqSameRegio[0]);
     source='vergelijkbaar';
     notes.push(`Vergelijkbare klant in de buurt (${sameFreqSameRegio[0].name}): €${base}`);
   } else if(sameRegio.length>=2){
     // Zelfde regio, andere frequentie → gebruik als referentie maar minder gewicht
-    const sorted=[...sameRegio].sort((a,b)=>a.price-b.price);
+    const sorted=[...sameRegio].sort((a,b)=>getDefaultCustPrice(a)-getDefaultCustPrice(b));
     const mid=Math.floor(sorted.length/2);
-    const regionBase=sorted.length%2?sorted[mid].price:Math.round((sorted[mid-1].price+sorted[mid].price)/2);
+    const regionBase=sorted.length%2?getDefaultCustPrice(sorted[mid]):Math.round((getDefaultCustPrice(sorted[mid-1])+getDefaultCustPrice(sorted[mid]))/2);
     base=regionBase;
     source='regio';
     notes.push(`Buurtgemiddelde (${sameRegio.length} klanten, andere frequentie): €${base}`);
@@ -822,16 +858,17 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
   // ── Stap 4: Eigen klantprijs — toon als informatief signaal, pas NIET de berekening aan
   // De prijs-tool berekent WAT het werk werkelijk kost; de klantprijs is wat ze gewend zijn.
   // Als er een grote kloof is, meldt de tool dit zodat de gebruiker bewust kan kiezen.
-  const sameRegio=cust?customers.filter(c=>c.id!==cust.id&&c.price>0&&sameRegion(c.address,cust.address||'')):[];
-  const avgSimilar=sameRegio.length?Math.round(sameRegio.reduce((s,c)=>s+c.price,0)/sameRegio.length):0;
+  const _ptCustPrice=getDefaultCustPrice(cust);
+  const sameRegio=cust?customers.filter(c=>c.id!==cust.id&&getDefaultCustPrice(c)>0&&sameRegion(c.address,cust.address||'')):[];
+  const avgSimilar=sameRegio.length?Math.round(sameRegio.reduce((s,c)=>s+getDefaultCustPrice(c),0)/sameRegio.length):0;
 
-  if(cust?.price>0){
-    const diff=Math.round((calcBase-cust.price)/cust.price*100);
+  if(_ptCustPrice>0){
+    const diff=Math.round((calcBase-_ptCustPrice)/_ptCustPrice*100);
     if(Math.abs(diff)>25){
-      notes.push(`⚠️ Berekend (€${calcBase}) wijkt ${diff>0?'+':''}${diff}% af van vaste klantprijs €${cust.price}`);
+      notes.push(`⚠️ Berekend (€${calcBase}) wijkt ${diff>0?'+':''}${diff}% af van vaste klantprijs €${_ptCustPrice}`+(cust?.prices?.length>1?' (standaard pakket)':''));
       notes.push('Tip: kloppen de m² / minuten? Of is de klantprijs toe aan herziening?');
     } else {
-      notes.push(`✓ Berekend bedrag sluit aan bij klantprijs €${cust.price}`);
+      notes.push(`✓ Berekend bedrag sluit aan bij klantprijs €${_ptCustPrice}`);
     }
   }
   if(avgSimilar>0){
@@ -839,7 +876,7 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
   }
 
   // ── Stap 5: Historische data als zachte correctie (max 25% gewicht, alleen bij schatting)
-  if(!cust?.price&&hist.length>=4){
+  if(!_ptCustPrice&&hist.length>=4){
     const recent=hist.slice(-6);
     const learned=Math.round(recent.reduce((s,p)=>s+p,0)/recent.length);
     const w=Math.min(0.25,hist.length*0.04);
@@ -849,7 +886,7 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
   }
 
   // ── Stap 6: Frequentietoeslag — alleen als er geen vaste klantprijs is
-  if(!cust?.price&&cust?.frequency){
+  if(!_ptCustPrice&&cust?.frequency){
     const days=FREQ_DAYS[cust.frequency]||0;
     if(days>=182){finalBase=Math.round(finalBase*1.12);notes.push('Eenmalig/jaarlijks → +12%');}
     else if(days>=84){finalBase=Math.round(finalBase*1.07);notes.push('Kwartaal → +7%');}
@@ -986,7 +1023,8 @@ function aiIsAvailable(dateStr){
 
 function aiFindBestDate(custId,fromDate,maxDays=30){
   const cust=getCust(custId);
-  const myRegion=cust?custRegionCode(cust):'????';
+  // Zorg dat coords gecached zijn voor volgende planronde
+  if(cust)triggerGeocodeBackground(cust.address);
   let best=null,bestScore=-999;
   for(let i=0;i<maxDays;i++){
     const ds=addDays(fromDate,i);
@@ -997,18 +1035,16 @@ function aiFindBestDate(custId,fromDate,maxDays=30){
     let reason='Beschikbare dag';
     let nearbyNames=[];
     if(cust){
-      const regionCounts={};
+      let farCount=0;
       dayJobs.forEach(j=>{
         const jc=getCust(j.custId);if(!jc)return;
-        const r=custRegionCode(jc);
-        regionCounts[r]=(regionCounts[r]||0)+1;
-        if(r===myRegion){score+=40;nearbyNames.push(jc.name);}
-        else if(sameRegion(cust.address,jc.address)){score+=15;nearbyNames.push(jc.name);}
+        // Gebruik hemelsbreed afstand als coords beschikbaar, anders postcode-fallback
+        if(sameRegion(cust.address,jc.address)){score+=40;nearbyNames.push(jc.name);}
+        else{farCount++;}
       });
-      if(nearbyNames.length)reason=`Zelfde wijk als ${nearbyNames.slice(0,2).map(n=>n.split(' ')[0]).join(', ')}`;
-      // Penalise days dominated by other regions
-      const dominantRegion=Object.entries(regionCounts).sort((a,b)=>b[1]-a[1])[0];
-      if(dominantRegion&&dominantRegion[0]!==myRegion&&dominantRegion[1]>=2)score-=20;
+      if(nearbyNames.length)reason=`Zelfde buurt als ${nearbyNames.slice(0,2).map(n=>n.split(' ')[0]).join(', ')}`;
+      // Straf dag met 2+ klanten ver weg
+      if(farCount>=2)score-=20;
     }
     score-=dayJobs.length*3;
     if(score>bestScore){
@@ -1096,8 +1132,9 @@ function aiLearnFromJob(jobId,actualMinutes,priceAccepted){
   const key=(j.work||[]).sort().join(',');
   if(!aiModel.prices[key])aiModel.prices[key]=[];
   if(!aiModel.durations[key])aiModel.durations[key]=[];
-  if(c.price){
-    aiModel.prices[key].push(c.price);
+  const _learnPrice=getJobRevenue(j);
+  if(_learnPrice>0){
+    aiModel.prices[key].push(_learnPrice);
     if(aiModel.prices[key].length>20)aiModel.prices[key]=aiModel.prices[key].slice(-20);
   }
   if(actualMinutes){
@@ -1123,7 +1160,7 @@ function aiGetInsights(){
     const start=`${y}-${String(m+1).padStart(2,'0')}-01`;
     const end=`${y}-${String(m+1).padStart(2,'0')}-${new Date(y,m+1,0).getDate()}`;
     const mj=jobs.filter(j=>j.date>=start&&j.date<=end&&j.status==='afgerond');
-    const rev=mj.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+    const rev=mj.reduce((s,j)=>s+getJobRevenue(j),0);
     months.push({lbl:d.toLocaleDateString('nl-NL',{month:'short'}),rev,jobs:mj.length,y,m});
   }
   // Weekly revenue last 8 weeks
@@ -1131,19 +1168,19 @@ function aiGetInsights(){
   for(let i=7;i>=0;i--){
     const start=weekDays(-i)[0],end=weekDays(-i)[6];
     const wj=jobs.filter(j=>j.date>=start&&j.date<=end&&j.status==='afgerond');
-    const rev=wj.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+    const rev=wj.reduce((s,j)=>s+getJobRevenue(j),0);
     const lbl=dateFromStr(start).toLocaleDateString('nl-NL',{day:'numeric',month:'short'});
     weeks.push({lbl,rev,jobs:wj.length});
   }
   // Top customers
   const custRevenue=customers.map(c=>{
     const done=jobs.filter(j=>j.custId===c.id&&j.status==='afgerond');
-    return{c,rev:done.length*(c.price||0),count:done.length};
+    return{c,rev:done.reduce((s,j)=>s+getJobRevenue(j),0),count:done.length};
   }).sort((a,b)=>b.rev-a.rev).slice(0,5);
   // Per worktype avg
   const wtStats=WORK_TYPES.map(wt=>{
     const relevant=jobs.filter(j=>j.status==='afgerond'&&(j.work||[]).includes(wt.id));
-    const prices=relevant.map(j=>{const c=getCust(j.custId);return c?.price||0;}).filter(p=>p>0);
+    const prices=relevant.map(j=>getJobRevenue(j)).filter(p=>p>0);
     const avgP=prices.length?Math.round(prices.reduce((s,p)=>s+p,0)/prices.length):0;
     return{wt,count:relevant.length,avgP};
   }).filter(x=>x.count>0).sort((a,b)=>b.avgP-a.avgP);
@@ -1153,7 +1190,7 @@ function aiGetInsights(){
     const dow=dateFromStr(j.date).getDay();
     const c=getCust(j.custId);
     if(!dayRev[dow])dayRev[dow]={total:0,count:0};
-    dayRev[dow].total+=(c?.price||0);dayRev[dow].count++;
+    dayRev[dow].total+=getJobRevenue(j);dayRev[dow].count++;
   });
   const bestDay=Object.entries(dayRev).sort((a,b)=>(b[1].total/b[1].count)-(a[1].total/a[1].count))[0];
   // This month vs last month
@@ -1162,6 +1199,51 @@ function aiGetInsights(){
   const lastM=months[months.length-2];
   const growth=lastM?.rev>0?Math.round((thisM.rev-lastM.rev)/lastM.rev*100):null;
   return{weeks,months,custRevenue,wtStats,bestDay,thisM,lastM,growth};
+}
+
+// ════════════════════════════════════════════════
+//  PRIJS-PAKKETTEN HELPERS
+// ════════════════════════════════════════════════
+function getDefaultCustPrice(cust){
+  if(!cust)return 0;
+  if(cust.prices?.length)return cust.prices[0].price||0;
+  return cust.price||0;
+}
+function getJobRevenue(job){
+  if(job?.price>0)return job.price;
+  return getDefaultCustPrice(getCust(job?.custId));
+}
+
+let _editPrices=[];
+function _renderEditPricesList(){
+  if(!_editPrices.length){
+    return`<div style="color:var(--text-muted);font-size:12px;padding:4px 0 8px">Geen vaste prijs — AI berekent de prijs per klus automatisch</div>`;
+  }
+  return _editPrices.map((p,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px" id="ep-row-${i}">
+      <input class="form-control" style="flex:2;min-width:0" type="text" placeholder="Omschrijving (bijv. Alleen glas)" value="${esc(p.lbl||'')}" oninput="_editPrices[${i}].lbl=this.value">
+      <div style="display:flex;align-items:center;border:1.5px solid var(--border);border-radius:10px;overflow:hidden;flex-shrink:0;background:var(--bg)">
+        <span style="padding:0 8px;font-size:14px;font-weight:700;color:var(--text-muted);border-right:1.5px solid var(--border)">€</span>
+        <input style="width:72px;padding:10px 8px;border:none;font-size:15px;font-weight:700;background:transparent;color:var(--text);outline:none" type="number" min="0" step="1" placeholder="75" value="${p.price||''}" oninput="_editPrices[${i}].price=parseFloat(this.value)||0">
+      </div>
+      <button onclick="removeEditPrice(${i})" style="flex-shrink:0;background:none;border:1.5px solid var(--border);border-radius:8px;color:var(--danger,#dc2626);font-size:16px;cursor:pointer;padding:4px 8px;line-height:1" title="Verwijder">✕</button>
+    </div>
+  `).join('');
+}
+function addEditPrice(){
+  _editPrices.push({id:uid(),lbl:'',price:0});
+  const el=document.getElementById('cf-prices-list');
+  if(el)el.innerHTML=_renderEditPricesList();
+}
+function removeEditPrice(i){
+  _editPrices.splice(i,1);
+  const el=document.getElementById('cf-prices-list');
+  if(el)el.innerHTML=_renderEditPricesList();
+}
+function selectPricePackage(pkgId){
+  const w=document.getElementById('ai-price-widget');
+  if(w)w.dataset.pkgId=pkgId;
+  updateAIPrice();
 }
 
 // ════════════════════════════════════════════════
@@ -1248,7 +1330,7 @@ function render(){
   const cDot=document.getElementById('concept-dot');if(cDot)cDot.style.display=jobs.filter(j=>j.status==='concept').length?'block':'none';
   // Dagtotaal — owner only
   const dt=document.getElementById('hdr-dagtotaal');
-  if(dt){if(isOwner()){const td=today();const rev=jobs.filter(j=>j.date===td&&j.status==='afgerond').reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);const doel=+(settings.dagDoel||250);const pct=doel?Math.min(100,Math.round(rev/doel*100)):0;if(rev>0||jobs.some(j=>j.date===td)){dt.innerHTML='€'+rev+(doel?' <span style="opacity:.65;font-weight:600">/ €'+doel+' ('+pct+'%)</span>':'');dt.style.display='block';}else{dt.style.display='none';}}else{dt.style.display='none';}}
+  if(dt){if(isOwner()){const td=today();const rev=jobs.filter(j=>j.date===td&&j.status==='afgerond').reduce((s,j)=>s+getJobRevenue(j),0);const doel=+(settings.dagDoel||250);const pct=doel?Math.min(100,Math.round(rev/doel*100)):0;if(rev>0||jobs.some(j=>j.date===td)){dt.innerHTML='€'+rev+(doel?' <span style="opacity:.65;font-weight:600">/ €'+doel+' ('+pct+'%)</span>':'');dt.style.display='block';}else{dt.style.display='none';}}else{dt.style.display='none';}}
   // Settings btn — owner only
   const sb=document.getElementById('hdr-settings-btn');if(sb)sb.style.display=(S.view==='ai'&&isOwner())?'flex':'none';
   // Logout btn
@@ -1331,14 +1413,17 @@ function pinConfirm(){
     const _doLogin=()=>{
       render();
       scheduleMorgenNotif();
-      setTimeout(()=>toast('Welkom, '+currentUser.name+'! 👋'),200);
+      setTimeout(()=>{
+        toast('Welkom, '+currentUser.name+'! 👋');
+        checkConceptApprovalNotify();
+      },400);
       if(window._fb){
         // Worker: altijd verbinden; Owner: verbinden als syncEnabled
         if(currentUser.role==='worker'||settings.syncEnabled){
           settings.syncEnabled=true;
           saveLocalOnly();
           startFirestoreListener();
-          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();toast('🔄 Data gesynchroniseerd!');}});
+          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();checkConceptApprovalNotify();toast('🔄 Data gesynchroniseerd!');}});
         }
       }
     };
@@ -1361,37 +1446,102 @@ function renderDashboard(rems){
     <button class="tab ${S.tab==='week'?'active':''}" onclick="setTab('week')">Week</button>
     <button class="tab ${S.tab==='kalender'?'active':''}" onclick="setTab('kalender')">📅</button>
   </div>`;
-  // Concept jobs banner (always visible)
+  // Concept jobs banner — gesplitst in "jouw beurt" vs "wacht op ander"
   const conceptJobs=jobs.filter(j=>j.status==='concept');
   if(conceptJobs.length){
     const w1n=settings.w1Name||'Ik';
     const w2n=settings.w2Name||'Collega';
-    h+=`<div style="background:var(--warning-light);border:2px solid var(--warning);border-radius:14px;padding:14px;margin-bottom:12px">
-      <div style="font-size:12px;font-weight:800;color:var(--warning);margin-bottom:8px">⏳ Wacht op goedkeuring (${conceptJobs.length})</div>
-      ${conceptJobs.map(job=>{
-        const cc=getCust(job.custId);if(!cc)return'';
-        const app=job.approvals||{w1:false,w2:false};
-        const aiSug=!job.date?aiFindBestDate(job.custId,today(),21):null;
-        return`<div onclick="nav('job','${job.id}')" style="cursor:pointer;background:#fff;border-radius:10px;padding:10px 12px;margin-bottom:6px;border:1px solid var(--border)">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${aiSug?'8px':'0'}">
-            <div>
-              <div style="font-size:14px;font-weight:700">${esc(cc.name)}</div>
-              <div style="font-size:11px;color:${job.date?'var(--text-muted)':'var(--warning)'};font-weight:${job.date?'400':'700'}">${job.date?fmtShort(job.date):'📅 Datum te plannen'}</div>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button onclick="event.stopPropagation();approveJob('${job.id}','w1')" style="padding:6px 10px;border-radius:8px;border:2px solid ${app.w1?'var(--success)':'var(--border)'};background:${app.w1?'var(--success-light)':'#fff'};font-size:11px;font-weight:800;cursor:pointer;color:${app.w1?'var(--success)':'var(--text-muted)'}">${app.w1?'✅':'⬜'} ${w1n}</button>
-              <button onclick="event.stopPropagation();approveJob('${job.id}','w2')" style="padding:6px 10px;border-radius:8px;border:2px solid ${app.w2?'var(--success)':'var(--border)'};background:${app.w2?'var(--success-light)':'#fff'};font-size:11px;font-weight:800;cursor:pointer;color:${app.w2?'var(--success)':'var(--text-muted)'}">${app.w2?'✅':'⬜'} ${w2n}</button>
-            </div>
+    const myKey=currentUser?.role==='owner'?'w1':'w2';
+    const otherKey=myKey==='w1'?'w2':'w1';
+    const otherName=myKey==='w1'?w2n:w1n;
+    const myName=myKey==='w1'?w1n:w2n;
+    const myPending=conceptJobs.filter(j=>!(j.approvals||{})[myKey]);    // JIK moet nog goedkeuren
+    const waitingOnOther=conceptJobs.filter(j=>(j.approvals||{})[myKey]&&!(j.approvals||{})[otherKey]); // IK heb ok, ander niet
+    const otherPhone=myKey==='w1'?settings.w2Phone:settings.w1Phone;
+
+    const jobRow=(job,needsMyApproval)=>{
+      const cc=getCust(job.custId);if(!cc)return'';
+      const app=job.approvals||{w1:false,w2:false};
+      const aiSug=!job.date?aiFindBestDate(job.custId,today(),21):null;
+      return`<div onclick="nav('job','${job.id}')" style="cursor:pointer;background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:6px;border:2px solid ${needsMyApproval?'var(--warning)':'var(--border)'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${aiSug?'8px':'0'}">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:700">${esc(cc.name)}</div>
+            <div style="font-size:11px;color:${job.date?'var(--text-muted)':'var(--warning)'};font-weight:${job.date?'400':'700'}">${job.date?fmtShort(job.date):'📅 Datum te plannen'}</div>
           </div>
-          ${aiSug?`<div onclick="event.stopPropagation()" style="background:var(--primary-light);border:1.5px solid var(--primary);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-            <div>
-              <div style="font-size:11px;font-weight:800;color:var(--primary)">🧠 AI stelt voor: ${fmtShort(aiSug.date)}</div>
-              <div style="font-size:10px;color:var(--primary);opacity:.75;margin-top:1px">${aiSug.reason}</div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            ${needsMyApproval
+              ? `<button onclick="event.stopPropagation();approveJob('${job.id}','${myKey}')" style="padding:8px 14px;border-radius:10px;border:none;background:var(--warning);color:#fff;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Goedkeuren</button>`
+              : `<span style="padding:6px 10px;border-radius:8px;background:var(--success-light);border:1.5px solid var(--success);font-size:11px;font-weight:800;color:var(--success)">✅ ${myName}</span>
+                 <span style="padding:6px 10px;border-radius:8px;background:var(--warning-light);border:1.5px solid var(--warning);font-size:11px;font-weight:800;color:var(--warning)">⏳ ${otherName}</span>`
+            }
+          </div>
+        </div>
+        ${aiSug?`<div onclick="event.stopPropagation()" style="background:var(--primary-light);border:1.5px solid var(--primary);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px">
+          <div>
+            <div style="font-size:11px;font-weight:800;color:var(--primary)">🧠 AI stelt voor: ${fmtShort(aiSug.date)}</div>
+            <div style="font-size:10px;color:var(--primary);opacity:.75;margin-top:1px">${aiSug.reason}</div>
+          </div>
+          <button onclick="event.stopPropagation();setJobDate('${job.id}','${aiSug.date}')" style="padding:5px 10px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">Accepteren</button>
+        </div>`:''}
+      </div>`;
+    };
+
+    h+=`<div style="border-radius:14px;overflow:hidden;margin-bottom:12px;border:2px solid ${myPending.length?'var(--warning)':'var(--border)'}">`;
+
+    // Sectie 1: mijn goedkeuring vereist (oranje header)
+    if(myPending.length){
+      h+=`<div style="background:var(--warning);padding:10px 14px;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:800;color:#fff">⏳ Jouw goedkeuring vereist (${myPending.length})</div>
+      </div>
+      <div style="background:var(--warning-light);padding:10px 10px 4px">
+        ${myPending.map(j=>jobRow(j,true)).join('')}
+      </div>`;
+    }
+
+    // Sectie 2: wacht op de ander (grijze header)
+    if(waitingOnOther.length){
+      h+=`<div style="background:var(--gray-light);padding:8px 14px;border-top:${myPending.length?'1.5px solid var(--border)':'none'}">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:11px;font-weight:800;color:var(--text-muted)">Wacht op ${otherName} (${waitingOnOther.length})</span>
+          ${otherPhone?`<button onclick="stuurGoedkeuringNudge()" style="border:none;background:none;color:#25d366;font-size:12px;font-weight:800;cursor:pointer;padding:2px 6px">💬 Stuur herinnering</button>`:''}
+        </div>
+      </div>
+      <div style="background:var(--card);padding:10px 10px 4px">
+        ${waitingOnOther.map(j=>jobRow(j,false)).join('')}
+      </div>`;
+    }
+
+    h+=`</div>`;
+  }
+
+  // ── Vandaag goedgekeurde klussen
+  const approvedToday=jobs.filter(j=>j.approvedAt&&j.approvedAt.slice(0,10)===today());
+  if(approvedToday.length){
+    const open=S._showApprovedToday!==false;
+    h+=`<div style="border-radius:14px;overflow:hidden;margin-bottom:12px;border:2px solid var(--success)">
+      <div onclick="S._showApprovedToday=!${open};render()" style="background:var(--success);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+        <div style="font-size:13px;font-weight:800;color:#fff">✅ Vandaag goedgekeurd (${approvedToday.length})</div>
+        <span style="color:#fff;font-size:16px">${open?'▲':'▼'}</span>
+      </div>
+      ${open?`<div style="background:var(--success-light);padding:10px 10px 4px">
+        ${approvedToday.map(j=>{
+          const cc=getCust(j.custId);if(!cc)return'';
+          const wl=workLbl(j.work||[]).join(', ')||'—';
+          const t=new Date(j.approvedAt);
+          const tijdStr=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
+          return`<div onclick="nav('job','${j.id}')" style="cursor:pointer;background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:6px;border:1.5px solid var(--success);display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:700">${esc(cc.name)}</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${wl}</div>
             </div>
-            <button onclick="event.stopPropagation();setJobDate('${job.id}','${aiSug.date}')" style="padding:5px 10px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">Accepteren</button>
-          </div>`:''}
-        </div>`;
-      }).join('')}
+            <div style="text-align:right;flex-shrink:0">
+              <div style="font-size:13px;font-weight:800;color:var(--success)">${j.date?fmtShort(j.date):'Datum onbekend'}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:1px">Goedgekeurd ${tijdStr}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`:''}
     </div>`;
   }
 
@@ -1439,18 +1589,57 @@ function renderDashboard(rems){
     const _calDays=weekDays();if(!S.calDay||!_calDays.includes(S.calDay))S.calDay=today();
     h+=renderCalendar();
   } else if(S.tab==='week'){
-    const days=weekDays();const td=today();
+    const wo=S.weekOffset||0;
+    const days=weekDays(wo);const td=today();
+    // Bepaal hoeveel weken vooruit er klussen zijn
+    const allFutureJobs=jobs.filter(j=>j.date>=td);
+    const maxFutureDate=allFutureJobs.reduce((m,j)=>j.date>m?j.date:m,'');
+    // Bereken max week offset op basis van verste klus
+    const maxWo=maxFutureDate?Math.ceil((dateFromStr(maxFutureDate)-new Date(weekDays(0)[0]))/(7*24*3600*1000))+1:0;
+    // Weeklabel
+    const monStr=fmtShort(days[0]);
+    const weekLabel=wo===0?'Deze week':wo===1?'Volgende week':'Week van '+monStr;
     const wj=jobs.filter(j=>days.includes(j.date));
-    const rev=wj.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+    const rev=wj.reduce((s,j)=>s+getJobRevenue(j),0);
+    // Nav header
+    h+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <button onclick="S.weekOffset=Math.max(0,(S.weekOffset||0)-1);render()" class="btn btn-ghost" style="padding:6px 12px;border:1.5px solid var(--border);font-size:16px;${wo===0?'opacity:.3;pointer-events:none':''}" ${wo===0?'disabled':''}>‹</button>
+      <div style="flex:1;text-align:center">
+        <div style="font-size:13px;font-weight:800;color:var(--text)">${weekLabel}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${days[0]} – ${days[6]}</div>
+      </div>
+      <button onclick="S.weekOffset=(S.weekOffset||0)+1;render()" class="btn btn-ghost" style="padding:6px 12px;border:1.5px solid var(--border);font-size:16px;${wo>=maxWo?'opacity:.3;pointer-events:none':''}" ${wo>=maxWo?'disabled':''}>›</button>
+    </div>`;
+    // Snel naar week met klussen — chip-scroller
+    if(maxWo>0){
+      const weekChips=[];
+      for(let w=0;w<=Math.min(maxWo,26);w++){
+        const wd=weekDays(w);
+        const cnt=jobs.filter(j=>wd.includes(j.date)&&j.status!=='afgerond').length;
+        if(cnt>0||w===0||w===wo){
+          const mon=dateFromStr(wd[0]);
+          const lbl=w===0?'Deze week':w===1?'Volgende week':
+            NL_MONTHS_S[mon.getMonth()]+' '+mon.getDate();
+          weekChips.push({w,cnt,lbl});
+        }
+      }
+      if(weekChips.length>1){
+        h+=`<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;-webkit-overflow-scrolling:touch;scrollbar-width:none">
+          ${weekChips.map(({w,cnt,lbl})=>`<button onclick="S.weekOffset=${w};render()" style="flex-shrink:0;border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700;border:1.5px solid ${w===wo?'var(--primary)':'var(--border)'};background:${w===wo?'var(--primary)':'var(--card)'};color:${w===wo?'#fff':'var(--text)'};cursor:pointer;white-space:nowrap">${esc(lbl)}${cnt?` <span style="opacity:.75">${cnt}×</span>`:''}</button>`).join('')}
+        </div>`;
+      }
+    }
     h+=`<div class="stats-grid">
       <div class="stat-box"><div class="stat-num">${wj.length}</div><div class="stat-lbl">Klussen</div></div>
       <div class="stat-box"><div class="stat-num" style="color:var(--success)">${wj.filter(j=>j.status==='afgerond').length}</div><div class="stat-lbl">Afgerond</div></div>
       ${isOwner()?`<div class="stat-box"><div class="stat-num" style="color:var(--success);font-size:20px">€${rev}</div><div class="stat-lbl">Omzet</div></div>`:''}
     </div>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:10px;border:1.5px solid var(--border)" onclick="openWeekCalModal()">📅 Week toevoegen aan Google Agenda</button>`;
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px;border:1.5px solid var(--border)" onclick="openWeekCalModal()">📅 Klussen toevoegen aan Google Agenda</button>`;
+    let hasAnyDay=false;
     days.forEach(day=>{
       const dj=jobs.filter(j=>j.date===day).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
       if(dj.length||day===td){
+        hasAnyDay=true;
         const isTd=day===td;
         const warns=getTravelWarnings(dj);
         const hasWarn=Object.keys(warns).length>0;
@@ -1458,11 +1647,18 @@ function renderDashboard(rems){
         h+=dj.length?dj.map(j=>jobCard(j,warns[j.id]||'')).join(''):`<p style="color:var(--text-muted);font-size:13px;padding:4px 4px 8px">Geen klussen</p>`;
       }
     });
+    if(!hasAnyDay){
+      h+=`<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+        <div style="font-size:32px;margin-bottom:8px">📭</div>
+        <div style="font-size:14px;font-weight:600">Geen klussen deze week</div>
+        ${wo<maxWo?`<button class="btn btn-ghost" style="margin-top:12px" onclick="S.weekOffset=(S.weekOffset||0)+1;render()">Volgende week →</button>`:''}
+      </div>`;
+    }
   } else {
     const ds=S.tab==='vandaag'?today():tomorrow();
     const fj=jobs.filter(j=>j.date===ds).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
     const warns=getTravelWarnings(fj);
-    const rev=fj.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+    const rev=fj.reduce((s,j)=>s+getJobRevenue(j),0);
     // Google Calendar events for this day
     const gEventsDay=getGCalForDate(ds);
     if(gCalConnected()&&gEventsDay.length){
@@ -1545,7 +1741,7 @@ function jobCard(job,warn=''){
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:7px">
           <div class="jc-name" style="flex:1">${esc(c.name)}</div>
-          ${c.price&&isOwner()?`<span class="price-pill" style="font-size:13px;padding:4px 10px;flex-shrink:0">€${c.price}</span>`:''}
+          ${isOwner()&&getDefaultCustPrice(c)>0?`<span class="price-pill" style="font-size:13px;padding:4px 10px;flex-shrink:0">€${getDefaultCustPrice(c)}${c.prices?.length>1?`<span style="font-size:9px;opacity:.7;margin-left:2px">+${c.prices.length-1}</span>`:''}</span>`:''}
         </div>
         <div class="jc-addr"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>${esc(c.address)}</div>
       </div>
@@ -1608,7 +1804,11 @@ function renderJobDetail(){
         ${c.phone?`<div class="info-row"><span class="ir-lbl">Telefoon</span><div style="display:flex;gap:8px;align-items:center"><a class="ir-val" href="tel:${esc(c.phone)}">${esc(c.phone)}</a><a href="https://wa.me/${fmtWaPhone(c.phone)}" target="_blank" style="background:#25d366;color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">WhatsApp</a></div></div>`:''}
         <div class="info-row"><span class="ir-lbl">Datum</span><span class="ir-val" style="display:flex;align-items:center;gap:8px">${job.date?`<span>${fmtLong(job.date)}</span>`:`<span style="color:var(--warning);font-weight:700;font-size:12px">In te plannen</span>`}<input type="date" value="${job.date||''}" onchange="setJobDate('${job.id}',this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;max-width:130px"></span></div>
         <div class="info-row"><span class="ir-lbl">Tijd</span><span class="ir-val">${job.time||'—'}</span></div>
-        ${c.price&&isOwner()?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val"><span class="price-pill">€${c.price}</span></span></div>`:''}
+        ${isOwner()&&(c.prices?.length||c.price)?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${c.prices?.length>1
+            ? c.prices.map(p=>`<button onclick="setJobPrice('${job.id}',${p.price})" style="border-radius:20px;padding:4px 12px;font-size:12px;font-weight:700;border:2px solid ${(job.price||c.prices[0].price)===p.price?'var(--success)':'var(--border)'};background:${(job.price||c.prices[0].price)===p.price?'var(--success-light)':'transparent'};color:${(job.price||c.prices[0].price)===p.price?'var(--success)':'var(--text-muted)'};cursor:pointer">€${p.price}${p.lbl?' — '+esc(p.lbl):''}</button>`).join('')
+            : `<span class="price-pill">€${job.price||c.price}</span>`}
+        </span></div>`:''}
         ${job.timerStart&&!job.timerEnd?`<div class="info-row"><span class="ir-lbl">Klok</span><span class="ir-val" style="color:var(--success);font-weight:700" id="live-timer">⏱️ loopt...</span></div>`:''}
         ${job.timerEnd?`<div class="info-row"><span class="ir-lbl">Tijd ter plaatse</span><span class="ir-val" style="font-weight:700">⏱️ ${Math.round((job.timerEnd-job.timerStart)/60000)} min</span></div>`:''}
       </div>
@@ -1812,7 +2012,7 @@ function renderCustDetail(){
   const c=getCust(S.custId);if(!c)return'<p>Niet gevonden.</p>';
   const cj=jobs.filter(j=>j.custId===c.id).sort((a,b)=>dateFromStr(b.date)-dateFromStr(a.date));
   const done=cj.filter(j=>j.status==='afgerond');
-  const rev=done.length*(c.price||0);
+  const rev=done.reduce((s,j)=>s+getJobRevenue(j),0);
   return`
     <button class="back-btn" onclick="nav('customers')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>Klanten</button>
     <div class="card">
@@ -1833,7 +2033,11 @@ function renderCustDetail(){
           </div>
         </div>
         ${c.phone?`<div class="info-row"><span class="ir-lbl">Telefoon</span><div style="display:flex;gap:8px;align-items:center"><a class="ir-val" href="tel:${esc(c.phone)}">${esc(c.phone)}</a><a href="https://wa.me/${fmtWaPhone(c.phone)}" target="_blank" style="background:#25d366;color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">WhatsApp</a></div></div>`:''}
-        ${isOwner()?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val">${c.price?'€'+c.price+' per klus':'—'}</span></div>`:''}
+        ${isOwner()?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val" style="display:flex;flex-direction:column;gap:5px;align-items:flex-start">
+          ${c.prices?.length
+            ? c.prices.map(p=>`<span style="display:flex;align-items:center;gap:6px"><span class="price-pill" style="font-size:13px">€${p.price}</span>${c.prices.length>1?`<span style="font-size:11px;color:var(--text-muted)">${esc(p.lbl||'')}</span>`:''}</span>`).join('')
+            : c.price?`<span class="price-pill" style="font-size:13px">€${c.price}</span>`:'<span style="color:var(--text-muted)">—</span>'}
+        </span></div>`:''}
         ${c.notes?`<div class="info-row"><span class="ir-lbl">Notities</span><span class="ir-val" style="color:var(--warning)">${esc(c.notes)}</span></div>`:''}
       </div>
     </div>
@@ -1870,6 +2074,11 @@ function renderCustForm(){
   const c=S.custId?getCust(S.custId):null;
   // Pre-fill from lead intake if available
   const pre=(typeof S.preCustomer==='object'&&S.preCustomer!==null)?S.preCustomer:null;
+  // Initialiseer prijspakketten voor bewerken
+  _editPrices=(c?.prices||[]).map(p=>({...p}));
+  if(!_editPrices.length&&(c?.price||pre?.price)){
+    _editPrices=[{id:uid(),lbl:WORK_TYPES[0]?.lbl||'Glasbewassing buiten',price:+(c?.price||pre?.price||0)}];
+  }
   return`
     <button class="back-btn" onclick="${c?`nav('customer','${c.id}')`:`nav('customers')`}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>${c?'Klant':'Klanten'}</button>
     <div class="card">
@@ -1880,7 +2089,12 @@ function renderCustForm(){
         <div id="addr-dup-warn" style="display:none;margin-top:6px;padding:9px 12px;background:var(--warning-light);border:1.5px solid var(--warning);border-radius:8px;font-size:12px;font-weight:700;color:var(--warning);cursor:pointer"></div>
       </div>
       <div class="form-group"><label class="form-label">Telefoon</label><input class="form-control" id="cf-phone" type="tel" placeholder="06-12345678" value="${esc(c?.phone||pre?.phone||'')}"></div>
-      ${isOwner()?`<div class="form-group"><label class="form-label">Prijs per klus (€)</label><input class="form-control" id="cf-price" type="number" placeholder="75" value="${c?.price||pre?.price||''}" min="0" step="1"></div>`:''}
+      ${isOwner()?`<div class="form-group">
+        <label class="form-label">Vaste prijzen per klus</label>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Voeg meerdere pakketten toe, bijv. "Alleen glas" en "Glas + boeidelen"</div>
+        <div id="cf-prices-list">${_renderEditPricesList()}</div>
+        <button type="button" onclick="addEditPrice()" style="width:100%;padding:9px;border:2px dashed var(--border);border-radius:10px;background:none;color:var(--primary);font-size:13px;font-weight:700;cursor:pointer;margin-top:4px">+ Pakket toevoegen</button>
+      </div>`:''}
       <div class="form-group"><label class="form-label">Herhaalfrequentie</label>
         <select class="form-control" id="cf-freq">${Object.entries(FREQS).map(([k,v])=>`<option value="${k}"${(c?.frequency||'none')===k?' selected':''}>${v}</option>`).join('')}</select>
       </div>
@@ -2033,6 +2247,31 @@ function updateAIPrice(){
   const widget=document.getElementById('ai-price-widget');
   if(!widget)return;
   if(!custId||!work.length){widget.innerHTML='';return;}
+
+  // Als klant meerdere vaste prijspakketten heeft, toon pakket-selector
+  const c=getCust(custId);
+  if(c?.prices?.length){
+    const selPkgId=widget.dataset.pkgId;
+    const selPkg=c.prices.find(p=>p.id===selPkgId)||c.prices[0];
+    widget.dataset.pkgId=selPkg.id;
+    widget.innerHTML=`<div class="ai-price-box" style="border:2px solid var(--success);background:var(--success-light)">
+      <div style="font-size:11px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">💰 Kies prijspakket</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+        ${c.prices.map(p=>`<button onclick="selectPricePackage('${p.id}')" style="border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;border:2px solid ${p.id===selPkg.id?'var(--success)':'var(--border)'};background:${p.id===selPkg.id?'var(--success)':'var(--card)'};color:${p.id===selPkg.id?'#fff':'var(--text)'};cursor:pointer;transition:all .15s">€${p.price}${c.prices.length>1?' — '+esc(p.lbl||''):''}</button>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:32px;font-weight:900;color:var(--success)">€${selPkg.price}</div>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--success)">✅ Vaste klantprijs</div>
+          <div style="font-size:11px;color:var(--text-muted)">${esc(selPkg.lbl||'Standaard pakket')}</div>
+        </div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  // Geen vaste pakketten: AI berekent
+  widget.dataset.pkgId='';
   const r=aiSuggestPrice(custId,work,date,qtys);
   if(!r){widget.innerHTML='';return;}
   const breakdown=r.qtySummary?`<div style="font-size:11px;color:var(--text-muted);margin-top:4px">${r.qtySummary}</div>`:'';
@@ -2513,10 +2752,14 @@ function renderAIAutoplan(){
 function renderAIAvailability(){
   const weeks=[0,1,2,3];
   const td=today();
-  const DOW=['Zo','Ma','Di','Wo','Do','Vr','Za'];
+  const myKey=currentUser?.role==='owner'?'w1':'w2';
 
-  // Render detail rows for each day in a week for a specific worker
+  // Helper: mag ik dit worker-profiel bewerken?
+  function canEdit(wk){return wk===myKey;}
+
+  // Dagrows — editable of read-only
   function dayRows(wk, days){
+    const editable=canEdit(wk);
     return days.map(ds=>{
       const d=dateFromStr(ds);
       const dow=d.getDay();
@@ -2527,7 +2770,24 @@ function renderAIAvailability(){
       const from=slot.from||'07:00';
       const to=slot.to||'17:00';
       const dayName=NL_DAYS_S[dow]+' '+d.getDate();
-      return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);${isPast?'opacity:.45;':''}">
+      const dim=isPast?'opacity:.45;':'';
+
+      if(!editable){
+        // Read-only weergave
+        return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);${dim}">
+          <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
+          <span style="width:36px;height:36px;border-radius:18px;border:2px solid;flex-shrink:0;font-size:14px;display:inline-flex;align-items:center;justify-content:center;
+            border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
+            ${on?'✓':'✗'}
+          </span>
+          ${on
+            ? `<span style="font-size:12px;color:var(--text-muted);flex:1">${from} – ${to}</span>`
+            : `<span style="font-size:12px;color:var(--text-muted);flex:1">Niet beschikbaar</span>`}
+        </div>`;
+      }
+
+      // Editable weergave
+      return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);${dim}">
         <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
         <button onclick="${isPast?'':`toggleAvail('${wk}','${ds}',${on})`}"
           style="width:36px;height:36px;border-radius:18px;border:2px solid;flex-shrink:0;font-size:14px;cursor:${isPast?'default':'pointer'};
@@ -2548,12 +2808,22 @@ function renderAIAvailability(){
 
   return`
     <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
+
     <div class="card" style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">👤 Naam</div>
       <div class="grid2">
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Naam medewerker 1</label>
-          <input class="form-control" id="av-w1name" type="text" value="${esc(availability.w1.name)}" placeholder="Naam" oninput="setWorkerName('w1',this.value)"></div>
-        <div class="form-group" style="margin-bottom:0"><label class="form-label">Naam medewerker 2</label>
-          <input class="form-control" id="av-w2name" type="text" value="${esc(availability.w2.name)}" placeholder="Naam" oninput="setWorkerName('w2',this.value)"></div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">${esc(availability.w1.name)}</label>
+          ${myKey==='w1'
+            ? `<input class="form-control" id="av-w1name" type="text" value="${esc(availability.w1.name)}" placeholder="Jouw naam" oninput="setWorkerName('w1',this.value)">`
+            : `<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w1.name)}</div>`}
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">${esc(availability.w2.name)}</label>
+          ${myKey==='w2'
+            ? `<input class="form-control" id="av-w2name" type="text" value="${esc(availability.w2.name)}" placeholder="Jouw naam" oninput="setWorkerName('w2',this.value)">`
+            : `<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w2.name)}</div>`}
+        </div>
       </div>
     </div>
 
@@ -2563,21 +2833,25 @@ function renderAIAvailability(){
       return`<div class="avail-section">
         <div class="avail-title">📅 ${weekTitle}</div>
         ${['w1','w2'].map(wk=>{
+          const editable=canEdit(wk);
           const wBlocked=availability[wk].blocked||{};
           const weekBlocks=days.flatMap(ds=>(wBlocked[ds]||[]).map((b,i)=>({...b,date:ds,idx:i})));
-          return`<div class="card" style="margin-bottom:10px;padding:12px 14px">
+          return`<div class="card" style="margin-bottom:10px;padding:12px 14px;${!editable?'opacity:.85;':''}">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-              <div style="font-size:13px;font-weight:800;color:var(--primary)">👷 ${esc(availability[wk].name)}</div>
-              <button class="btn btn-sm" style="background:var(--purple);color:#fff;gap:5px;padding:6px 10px;font-size:11px" onclick="openRoosterScan('${wk}',${wo})">
+              <div style="display:flex;align-items:center;gap:6px">
+                <div style="font-size:13px;font-weight:800;color:${editable?'var(--primary)':'var(--text-muted)'}">👷 ${esc(availability[wk].name)}</div>
+                ${!editable?`<span style="font-size:10px;background:var(--gray-light);color:var(--text-muted);border-radius:6px;padding:2px 7px;font-weight:700">🔒 alleen lezen</span>`:''}
+              </div>
+              ${editable?`<button class="btn btn-sm" style="background:var(--purple);color:#fff;gap:5px;padding:6px 10px;font-size:11px" onclick="openRoosterScan('${wk}',${wo})">
                 📷 Scan rooster
-              </button>
+              </button>`:''}
             </div>
-            ${weekBlocks.length?`<div style="margin-bottom:10px;padding:10px;background:var(--purple-light);border-radius:10px;border:1.5px solid var(--purple)">
-              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:6px">📚 Gescande blokken (incl. 45 min reistijd)</div>
+            ${editable&&weekBlocks.length?`<div style="margin-bottom:10px;padding:10px;background:var(--purple-light);border-radius:10px;border:1.5px solid var(--purple)">
+              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:6px">📚 Gescande blokken</div>
               ${weekBlocks.map(b=>`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(124,58,237,.15);font-size:12px">
                 <span style="font-size:14px">${b.type==='school'?'🎒':'💼'}</span>
                 <span style="flex:1;font-weight:600">${NL_DAYS_S[dateFromStr(b.date).getDay()]} ${dateFromStr(b.date).getDate()} — ${b.from}–${b.to}</span>
-                <span style="color:var(--text-muted);font-size:11px">${esc(b.label)}</span>
+                <span style="color:var(--text-muted);font-size:11px">${esc(b.label)}${b.isFirst?' 🚗↗':''}${b.isLast?' 🚗↙':''}</span>
                 <button onclick="removeRoosterBlock('${wk}','${b.date}',${b.idx})" style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--danger);padding:0 2px">✕</button>
               </div>`).join('')}
             </div>`:''}
@@ -2589,14 +2863,28 @@ function renderAIAvailability(){
 
     <div class="card">
       <div style="font-size:13px;font-weight:700;margin-bottom:12px">⚙️ Standaard werktijden per dag</div>
-      ${['w1','w2'].map(wk=>`
-        <div style="margin-bottom:16px">
-          <div style="font-size:12px;font-weight:800;color:var(--primary);margin-bottom:8px">👷 ${esc(availability[wk].name)}</div>
+      ${['w1','w2'].map(wk=>{
+        const editable=canEdit(wk);
+        return`<div style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <div style="font-size:12px;font-weight:800;color:${editable?'var(--primary)':'var(--text-muted)'}">👷 ${esc(availability[wk].name)}</div>
+            ${!editable?`<span style="font-size:10px;background:var(--gray-light);color:var(--text-muted);border-radius:6px;padding:2px 7px;font-weight:700">🔒 alleen lezen</span>`:''}
+          </div>
           ${[1,2,3,4,5,6,0].map(dow=>{
             const slot=availability[wk].days[dow];
             const isOn=typeof slot==='object'?slot.on:!!slot;
             const from=typeof slot==='object'?(slot.from||'07:00'):'07:00';
             const to=typeof slot==='object'?(slot.to||'17:00'):'17:00';
+            if(!editable){
+              return`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+                <div style="width:28px;font-size:11px;font-weight:700;color:var(--text-muted)">${NL_DAYS_S[dow]}</div>
+                <span style="width:34px;height:34px;border-radius:17px;border:2px solid;flex-shrink:0;font-size:13px;display:inline-flex;align-items:center;justify-content:center;
+                  border-color:${isOn?'var(--success)':'var(--border)'};background:${isOn?'var(--success-light)':'var(--gray-light)'}">
+                  ${isOn?'✓':'✗'}
+                </span>
+                <span style="font-size:12px;color:var(--text-muted)">${isOn?from+' – '+to:'Niet beschikbaar'}</span>
+              </div>`;
+            }
             return`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
               <div style="width:28px;font-size:11px;font-weight:700;color:var(--text-muted)">${NL_DAYS_S[dow]}</div>
               <button onclick="toggleWeekday('${wk}',${dow})"
@@ -2612,7 +2900,8 @@ function renderAIAvailability(){
                 onchange="setWeekdayTime('${wk}',${dow},'to',this.value)">`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
             </div>`;
           }).join('')}
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </div>
     <input type="file" id="rooster-file-input" accept="image/*" style="display:none" onchange="handleRoosterFile(this)">`;
 }
@@ -2848,7 +3137,7 @@ function emptyState(icon,title,desc){return`<div class="empty"><div class="empty
 // ════════════════════════════════════════════════
 //  ACTIONS
 // ════════════════════════════════════════════════
-function setTab(t){S.tab=t;render()}
+function setTab(t){S.tab=t;if(t==='week')S.weekOffset=0;render()}
 function setCalDay(d){S.calDay=d;render()}
 
 // Normalize address for duplicate comparison
@@ -6545,9 +6834,19 @@ function createJob(){
   if(!date){toast('⚠️ Kies eerst een datum via AI of handmatig');return;}
   const work=[...document.querySelectorAll('#nj-wt .check-item.on')].map(el=>el.dataset.id);
   const mats=[...document.querySelectorAll('#nj-mat .check-item.on-mat')].map(el=>el.dataset.id);
-  const job={id:uid(),custId,date,time,status:'concept',approvals:{w1:false,w2:false},work,mats,notes,created:new Date().toISOString()};
+  // Haal prijs op uit geselecteerd pakket (als aanwezig)
+  const widget=document.getElementById('ai-price-widget');
+  let jobPrice=0;
+  const custForJob=getCust(custId);
+  if(custForJob?.prices?.length){
+    const pkgId=widget?.dataset?.pkgId||custForJob.prices[0].id;
+    const pkg=custForJob.prices.find(p=>p.id===pkgId)||custForJob.prices[0];
+    jobPrice=pkg?.price||0;
+  }
+  const job={id:uid(),custId,date,time,status:'concept',approvals:{w1:false,w2:false},work,mats,notes,created:new Date().toISOString(),...(jobPrice>0?{price:jobPrice}:{})};
   jobs.push(job);saveAll();
   S.preCustomer=null;S.njAiDates=null;S.njChosenDate='';S.njShowManual=false;
+  _lastConceptNotifKey=''; // reset zodat de ander een notif krijgt bij volgende bezoek
   toast('📋 Klus aangemaakt — wacht op goedkeuring');
   S.jobId=job.id;nav('job',job.id);
 }
@@ -6559,8 +6858,11 @@ function approveJob(jobId,worker){
   job.approvals[worker]=true;
   if(job.approvals.w1&&job.approvals.w2){
     job.status='gepland';
+    job.approvedAt=new Date().toISOString();
+    _lastConceptNotifKey=''; // reset zodat andere gebruiker nieuwe notif krijgt
     toast('✅ Beide akkoord — klus ingepland!');
   } else {
+    _lastConceptNotifKey=''; // reset — andere gebruiker moet nog akkoord geven
     toast('✅ Akkoord opgeslagen, wacht op de ander');
   }
   saveRender();
@@ -6575,6 +6877,10 @@ function revokeApproval(jobId,worker){
 }
 
 function planForCust(custId){S.preCustomer=custId;S.njAiDates=null;S.njChosenDate='';S.njShowManual=false;nav('new');}
+function setJobPrice(jobId,price){
+  const job=getJob(jobId);if(!job)return;
+  job.price=price;saveRender();
+}
 
 function njFetchDates(){
   const custId=document.getElementById('nj-cust')?.value;
@@ -6609,19 +6915,23 @@ function saveCust(){
   const name=document.getElementById('cf-name')?.value?.trim();
   const address=document.getElementById('cf-addr')?.value?.trim()||'';
   const phone=document.getElementById('cf-phone')?.value?.trim()||'';
-  const price=parseFloat(document.getElementById('cf-price')?.value)||0;
   const frequency=document.getElementById('cf-freq')?.value||'none';
   const notes=document.getElementById('cf-notes')?.value?.trim()||'';
   if(!name){toast('⚠️ Naam is verplicht');return;}
+  // Verzamel prijspakketten (_editPrices is bijgewerkt via oninput)
+  const prices=_editPrices
+    .filter(p=>p.price>0)
+    .map(p=>({id:p.id||uid(),lbl:(p.lbl||'').trim()||'Klantprijs',price:+(p.price)||0}));
+  const price=prices[0]?.price||0; // backward compat — primaire prijs
   // Duplicate address check on save
   const dupOnSave=address?customers.find(c=>c.id!==S.custId&&normAddr(c.address)===normAddr(address)):null;
   if(dupOnSave&&!confirm(`⚠️ Zelfde adres als "${dupOnSave.name}".\nToch opslaan?`))return;
   if(S.custId){
     const c=getCust(S.custId);
-    if(c){Object.assign(c,{name,address,phone,price,frequency,notes});saveAll();toast('✅ Opgeslagen');nav('customer',S.custId);}
+    if(c){Object.assign(c,{name,address,phone,price,prices,frequency,notes});saveAll();triggerGeocodeBackground(address);toast('✅ Opgeslagen');nav('customer',S.custId);}
   } else {
-    const c={id:uid(),name,address,phone,price,frequency,notes,created:new Date().toISOString()};
-    customers.push(c);saveAll();toast('✅ Klant toegevoegd');S.custId=c.id;nav('customer',c.id);
+    const c={id:uid(),name,address,phone,price,prices,frequency,notes,created:new Date().toISOString()};
+    customers.push(c);saveAll();triggerGeocodeBackground(address);toast('✅ Klant toegevoegd');S.custId=c.id;nav('customer',c.id);
   }
 }
 
@@ -6666,9 +6976,16 @@ function applyPriceToCustomer(){
   if(!S.priceCalc.result||!S.priceCalc.custId)return;
   const c=getCust(S.priceCalc.custId);
   if(!c)return;
-  const oldPrice=c.price;
-  c.price=S.priceCalc.result.suggestion;
-  saveAll();toast(`✅ Prijs bijgewerkt: €${oldPrice} → €${c.price}`);
+  const oldPrice=getDefaultCustPrice(c);
+  const newPrice=S.priceCalc.result.suggestion;
+  c.price=newPrice;
+  // Update ook het eerste pakket als dat bestaat, of maak er één aan
+  if(c.prices?.length){
+    c.prices[0].price=newPrice;
+  } else {
+    c.prices=[{id:uid(),lbl:WORK_TYPES[0]?.lbl||'Glasbewassing buiten',price:newPrice}];
+  }
+  saveAll();toast(`✅ Prijs bijgewerkt: €${oldPrice} → €${newPrice}`);
 }
 
 function acceptSuggestion(idx,custId,date){
@@ -6807,7 +7124,14 @@ function applyRoute(dateStr){
   saveAll();toast('✅ Route opgeslagen — tijden bijgewerkt!');
 }
 
+function _myWorkerKey(){return currentUser?.role==='owner'?'w1':'w2';}
+function _guardAvail(worker){
+  if(worker!==_myWorkerKey()){toast('⚠️ Je kunt alleen je eigen beschikbaarheid aanpassen');return false;}
+  return true;
+}
+
 function toggleAvail(worker,dateStr,currentOn){
+  if(!_guardAvail(worker))return;
   if(!availability[worker].exceptions)availability[worker].exceptions={};
   const cur=getAvailSlot(worker,dateStr);
   availability[worker].exceptions[dateStr]={on:!currentOn,from:cur.from,to:cur.to};
@@ -6815,6 +7139,7 @@ function toggleAvail(worker,dateStr,currentOn){
 }
 
 function setAvailTime(worker,dateStr,field,val){
+  if(!_guardAvail(worker))return;
   if(!availability[worker].exceptions)availability[worker].exceptions={};
   const cur=getAvailSlot(worker,dateStr);
   availability[worker].exceptions[dateStr]={...cur,[field]:val};
@@ -6822,6 +7147,7 @@ function setAvailTime(worker,dateStr,field,val){
 }
 
 function toggleWeekday(worker,dow){
+  if(!_guardAvail(worker))return;
   const cur=availability[worker].days[dow];
   const isOn=typeof cur==='object'?cur.on:!!cur;
   const from=typeof cur==='object'?cur.from:'07:00';
@@ -6831,6 +7157,7 @@ function toggleWeekday(worker,dow){
 }
 
 function setWeekdayTime(worker,dow,field,val){
+  if(!_guardAvail(worker))return;
   const cur=availability[worker].days[dow];
   const isOn=typeof cur==='object'?cur.on:!!cur;
   const from=typeof cur==='object'?cur.from:'07:00';
@@ -6841,6 +7168,7 @@ function setWeekdayTime(worker,dow,field,val){
 }
 
 function setWorkerName(worker,name){
+  if(!_guardAvail(worker))return;
   availability[worker].name=name;
   if(worker==='w1')settings.w1Name=name;
   if(worker==='w2')settings.w2Name=name;
@@ -7096,7 +7424,7 @@ function exportPDF(jobId){
 ${c.phone?`<tr><td>Telefoon</td><td>${esc(c.phone)}</td></tr>`:''}
 <tr><td>Datum</td><td>${fmtLong(job.date)}</td></tr>
 <tr><td>Tijd</td><td>${job.time||'—'}</td></tr>
-<tr><td>Prijs</td><td>${c.price?'€'+c.price:'—'}</td></tr>
+<tr><td>Prijs</td><td>${getJobRevenue(job)>0?'€'+getJobRevenue(job):'—'}</td></tr>
 <tr><td>Status</td><td>${job.status}</td></tr>
 </table>
 ${c.notes?`<div class="warn">⚠️ <b>Let op:</b> ${esc(c.notes)}</div>`:''}
@@ -7126,6 +7454,7 @@ function toast(msg){
 let _roosterScanWorker=null, _roosterScanWeek=null, _pendingBlocks=null;
 
 function openRoosterScan(worker, weekOffset){
+  if(!_guardAvail(worker))return;
   if(!settings.claudeApiKey){
     showModal(`
       <div class="modal-title">🤖 API-sleutel vereist</div>
@@ -7327,19 +7656,38 @@ function addMinutesToTime(t, mins){
 
 function applyRoosterBlocks(worker, blocks){
   if(!availability[worker].blocked)availability[worker].blocked={};
+
+  // Groepeer per dag en sorteer op starttijd
+  const byDate={};
   blocks.forEach(b=>{
-    const ds=b.date;
-    if(!availability[worker].blocked[ds])availability[worker].blocked[ds]=[];
-    availability[worker].blocked[ds].push({
-      from: addMinutesToTime(b.startTime,-45),
-      to:   addMinutesToTime(b.endTime,45),
-      label: b.label||'Bezet',
-      type:  b.type||'school'
-    });
+    if(!byDate[b.date])byDate[b.date]=[];
+    byDate[b.date].push(b);
   });
+  Object.values(byDate).forEach(arr=>arr.sort((a,b)=>a.startTime.localeCompare(b.startTime)));
+
+  let totalAdded=0;
+  Object.entries(byDate).forEach(([ds,dayBlocks])=>{
+    if(!availability[worker].blocked[ds])availability[worker].blocked[ds]=[];
+    dayBlocks.forEach((b,i)=>{
+      const isFirst=i===0;
+      const isLast=i===dayBlocks.length-1;
+      // Reistijd alleen vóór de eerste les (heen) en ná de laatste les (terug)
+      // Tussenliggende lessen: exacte tijden — je bent al op school
+      const from=isFirst?addMinutesToTime(b.startTime,-45):b.startTime;
+      const to  =isLast ?addMinutesToTime(b.endTime,   45):b.endTime;
+      availability[worker].blocked[ds].push({
+        from, to,
+        label: b.label||'Bezet',
+        type:  b.type||'school',
+        isFirst, isLast  // opslaan zodat de weergave het correct toont
+      });
+    });
+    totalAdded+=dayBlocks.length;
+  });
+
   saveAll();
   render();
-  toast('✅ '+blocks.length+' blokken toegevoegd aan beschikbaarheid');
+  toast('✅ '+totalAdded+' blokken toegevoegd — reistijd bij eerste en laatste les');
 }
 
 function removeRoosterBlock(worker, date, idx){
@@ -7646,7 +7994,7 @@ function buildMorgenRouteMsg(dateStr){
     curAddr=c.address;
   });
 
-  const totRev=ordered.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+  const totRev=ordered.reduce((s,j)=>s+getJobRevenue(j),0);
   msg+=`\n${ordered.length} klus${ordered.length!==1?'sen':''}`+(totRev>0?` · €${totRev}`:'')+
        (result.totalKm?` · ~${result.totalKm} km`:'')+
        `\n— ${bedrijf}`;
@@ -7738,6 +8086,77 @@ let _pendingMorgenMsg=null;
 let _pendingMorgenDate=null;
 
 // ════════════════════════════════════════════════
+//  GOEDKEURING NOTIFICATIES
+// ════════════════════════════════════════════════
+let _lastConceptNotifKey='';
+
+function checkConceptApprovalNotify(){
+  if(!currentUser)return;
+  const workerKey=currentUser.role==='owner'?'w1':'w2';
+  const otherKey=workerKey==='w1'?'w2':'w1';
+  const otherName=workerKey==='w1'?(settings.w2Name||'Collega'):(settings.w1Name||'Eigenaar');
+
+  // Klussen die DEZE gebruiker nog niet heeft goedgekeurd
+  const myPending=jobs.filter(j=>j.status==='concept'&&!(j.approvals||{})[workerKey]);
+  if(!myPending.length){_lastConceptNotifKey='';return;}
+
+  // Voorkom dubbele notificaties voor dezelfde set klussen
+  const key=workerKey+'_'+myPending.map(j=>j.id).sort().join(',');
+  if(key===_lastConceptNotifKey)return;
+  _lastConceptNotifKey=key;
+
+  // Browser-notificatie
+  if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
+    try{
+      const names=myPending.slice(0,3).map(j=>{
+        const c=getCust(j.custId);
+        return(c?.name||'?')+(j.date?' · '+fmtShort(j.date):'');
+      });
+      const n=new Notification(
+        `⏳ ${myPending.length} klus${myPending.length!==1?'sen staan':' staat'} op jouw goedkeuring`,
+        {
+          body:names.join('\n')+(myPending.length>3?'\n...':'')+'\nTik om te bekijken',
+          icon:'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'%3E%3Crect width=\'192\' height=\'192\' rx=\'38\' fill=\'%23f59e0b\'/%3E%3Ctext y=\'130\' x=\'96\' text-anchor=\'middle\' font-size=\'120\'%3E%E2%8F%B3%3C/text%3E%3C/svg%3E',
+          tag:'concept-approval',
+          renotify:true,
+          requireInteraction:true
+        }
+      );
+      n.onclick=()=>{window.focus();S.view='dashboard';S.tab='vandaag';render();window.scrollTo(0,0);};
+    }catch(e){}
+  }
+}
+
+function buildConceptWhatsAppMsg(pendingJobs){
+  const naam=currentUser?.name||(currentUser?.role==='owner'?(settings.w1Name||'Eigenaar'):(settings.w2Name||'Collega'));
+  let msg=`📋 Goedkeuring gevraagd\n\n`;
+  pendingJobs.forEach(j=>{
+    const c=getCust(j.custId);if(!c)return;
+    msg+=`• ${c.name}${j.date?' — '+fmtShort(j.date):' — datum nog open'}\n`;
+  });
+  msg+=`\nOpen de CleanSoft app om goed te keuren.\n— ${naam}`;
+  return msg;
+}
+
+function stuurGoedkeuringNudge(){
+  // Stuur WhatsApp naar de collega om hen te herinneren
+  const workerKey=currentUser?.role==='owner'?'w1':'w2';
+  const otherPhone=workerKey==='w1'?settings.w2Phone:settings.w1Phone;
+  const otherName=workerKey==='w1'?(settings.w2Name||'Collega'):(settings.w1Name||'Eigenaar');
+  // Klussen wachtend op de ANDER
+  const theirPending=jobs.filter(j=>j.status==='concept'&&!(j.approvals||{})[workerKey==='w1'?'w2':'w1']);
+  if(!theirPending.length){toast('Geen klussen die wachten op de ander');return;}
+  const msg=buildConceptWhatsAppMsg(theirPending);
+  const phone=fmtWaPhone(otherPhone||'');
+  if(phone){
+    window.open('https://wa.me/'+phone+'?text='+encodeURIComponent(msg),'_blank');
+  } else {
+    navigator.clipboard?.writeText(msg).then(()=>toast('📋 Bericht gekopieerd! Voer een WhatsApp-nummer in bij Instellingen.')).catch(()=>{});
+    toast(`Stel het nummer van ${otherName} in bij Instellingen → Medewerkers`);
+  }
+}
+
+// ════════════════════════════════════════════════
 //  PUSH NOTIFICATIES
 // ════════════════════════════════════════════════
 async function requestNotificationPermission(){
@@ -7775,13 +8194,14 @@ function maybeAskNotifications(){
   setTimeout(async()=>{
     await requestNotificationPermission();
     checkRemindersAndNotify();
+    checkConceptApprovalNotify();
   },3000);
 }
 document.addEventListener('click',maybeAskNotifications,{once:true});
 
 // Check on visibility restore
 document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden){checkRemindersAndNotify();}
+  if(!document.hidden){checkRemindersAndNotify();checkConceptApprovalNotify();}
 });
 
 // ════════════════════════════════════════════════
@@ -7845,6 +8265,8 @@ render();
 })();
 loadWeather();
 checkRemindersAndNotify();
+// Geocodeer alle klantadressen op de achtergrond zodat haversine-afstanden werken
+setTimeout(warmGeocodeCache,5000);
 // Pull latest cloud data on startup via Firebase
 if(settings.syncEnabled){
   window.addEventListener('fb-ready',()=>{
