@@ -1018,8 +1018,18 @@ function getAvailSlot(worker,dateStr){
   // legacy bool support
   return{on:!!d,from:'07:00',to:'17:00'};
 }
+function slotTotalMinutes(slot){
+  // Bereken totale beschikbare minuten voor een slot (rekening met meerdere vensters)
+  if(!slot.on)return 0;
+  const wins=slot.windows||[{from:slot.from||'07:00',to:slot.to||'17:00'}];
+  return wins.reduce((sum,w)=>{
+    const [fH,fM]=w.from.split(':').map(Number);
+    const [tH,tM]=w.to.split(':').map(Number);
+    return sum+(tH*60+tM - fH*60-fM);
+  },0);
+}
 function aiIsAvailable(dateStr){
-  return getAvailSlot('w1',dateStr).on||getAvailSlot('w2',dateStr).on;
+  return slotTotalMinutes(getAvailSlot('w1',dateStr))>0||slotTotalMinutes(getAvailSlot('w2',dateStr))>0;
 }
 
 function aiFindBestDate(custId,fromDate,maxDays=30){
@@ -2846,21 +2856,31 @@ function renderAIAvailability(){
         </span>`;
       }).join('');
 
+      // Bouw lijst van beschikbare tijdvensters voor weergave
+      const slotWindows=slot.windows||( on?[{from,to}]:[] );
+      const windowBadges=slotWindows.map(w=>
+        `<span style="font-size:12px;color:var(--success);font-weight:700;white-space:nowrap">✓ ${w.from}–${w.to}</span>`
+      ).join('<span style="font-size:11px;color:var(--text-muted);margin:0 2px">&</span>');
+
       if(!editable){
         return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
-          <div style="display:flex;align-items:center;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
-            ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap;flex:1">${schoolBadge}</div>`:''}
+            ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap">${schoolBadge}</div>`:''}
             <span style="width:32px;height:32px;border-radius:16px;border:2px solid;flex-shrink:0;font-size:13px;display:inline-flex;align-items:center;justify-content:center;
               border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
               ${on?'✓':'✗'}
             </span>
-            ${!schoolBadge?(on?`<span style="font-size:12px;color:var(--text-muted)">${from}–${to}</span>`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`):''}
+            ${on
+              ? `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${windowBadges}</div>`
+              : `<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
           </div>
         </div>`;
       }
 
       // Editable weergave — school badge + toggle + tijden op zelfde rij
+      // Als er schoolblokken zijn: toon de vrije vensters als tekst (geen losse inputs)
+      const hasSchool=dayBlocks.length>0;
       return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
@@ -2870,14 +2890,17 @@ function renderAIAvailability(){
             border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
             ${on?'✓':'✗'}
           </button>
-          ${on?`
-          <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
-            <input type="time" value="${from}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-              onchange="setAvailTime('${wk}','${ds}','from',this.value)">
-            <span style="font-size:12px;color:var(--text-muted)">–</span>
-            <input type="time" value="${to}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-              onchange="setAvailTime('${wk}','${ds}','to',this.value)">
-          </div>`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
+          ${on
+            ? (hasSchool
+                ? `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${windowBadges}</div>`
+                : `<div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
+                    <input type="time" value="${from}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
+                      onchange="setAvailTime('${wk}','${ds}','from',this.value)">
+                    <span style="font-size:12px;color:var(--text-muted)">–</span>
+                    <input type="time" value="${to}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
+                      onchange="setAvailTime('${wk}','${ds}','to',this.value)">
+                  </div>`)
+            : `<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
         </div>
       </div>`;
     }).join('');
@@ -3488,6 +3511,8 @@ function renderCalendar(){
   const days=weekDays();const td=today();
   const dayJobs=jobs.filter(j=>j.date===S.calDay).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
   const warns=getTravelWarnings(dayJobs);
+
+  // ── Dag-pills (week navigator) ──────────────────────────────────────────
   const jobCountByDay=new Map();
   jobs.forEach(j=>{if(days.includes(j.date))jobCountByDay.set(j.date,(jobCountByDay.get(j.date)||0)+1);});
   const DAY_SHORT=['Ma','Di','Wo','Do','Vr','Za','Zo'];
@@ -3495,74 +3520,147 @@ function renderCalendar(){
     const dj=jobCountByDay.get(d)||0;
     const isToday=d===td;const isSel=d===S.calDay;
     const dayN=new Date(d+'T12:00:00').getDate();
+    const hasSchool=Object.values(availability).some(av=>(av.blocked||{})[d]?.length);
     return`<button onclick="setCalDay('${d}')" style="flex:1;padding:6px 2px 8px;border:none;border-radius:10px;cursor:pointer;background:${isSel?'var(--primary)':'transparent'};color:${isSel?'#fff':isToday?'var(--primary)':'var(--text-muted)'};font-weight:${isToday||isSel?'800':'500'};position:relative">
       <div style="font-size:9px;text-transform:uppercase;letter-spacing:.5px">${DAY_SHORT[i]}</div>
       <div style="font-size:17px;font-weight:800;line-height:1.3">${dayN}</div>
-      ${dj?`<div style="position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:${isSel?'rgba(255,255,255,.7)':'var(--primary)'}"></div>`:''}
+      <div style="display:flex;justify-content:center;gap:2px;margin-top:2px;min-height:6px">
+        ${dj?`<div style="width:5px;height:5px;border-radius:50%;background:${isSel?'rgba(255,255,255,.7)':'var(--primary)'}"></div>`:''}
+        ${hasSchool?`<div style="width:5px;height:5px;border-radius:50%;background:${isSel?'rgba(255,255,255,.55)':'var(--purple)'}"></div>`:''}
+      </div>
     </button>`;
   }).join('');
 
-  const START_H=7;const END_H=19;const PX_H=60;const TOTAL=( END_H-START_H)*PX_H;
+  // ── Tijdlijn constanten ──────────────────────────────────────────────────
+  const START_H=7;const END_H=20;const PX_H=60;const TOTAL=(END_H-START_H)*PX_H;
+  const GL=40; // grid left  (ruimte voor uurlabels)
+  const GR=4;  // grid right margin
+
+  // ── Uur-lijnen ───────────────────────────────────────────────────────────
   let hourLines='';
   for(let h=START_H;h<=END_H;h++){
     const y=(h-START_H)*PX_H;
+    const isEven=h%2===0;
     hourLines+=`<div style="position:absolute;left:0;right:0;top:${y}px;display:flex;align-items:flex-start;pointer-events:none">
-      <span style="font-size:10px;color:var(--text-muted);width:36px;flex-shrink:0;font-weight:600;padding-top:1px">${String(h).padStart(2,'0')}:00</span>
-      <div style="flex:1;height:1px;background:var(--border);margin-top:7px"></div>
+      <span style="font-size:9px;color:var(--text-muted);width:${GL-4}px;flex-shrink:0;font-weight:600;padding-top:1px;opacity:${isEven?1:.55}">${String(h).padStart(2,'0')}:00</span>
+      <div style="flex:1;height:1px;background:${isEven?'var(--border)':'rgba(0,0,0,.04)'};margin-top:7px"></div>
     </div>`;
   }
 
+  // ── Nu-streep ────────────────────────────────────────────────────────────
   let timeLine='';
   if(S.calDay===td){
     const now=new Date();
     const nowY=(now.getHours()*60+now.getMinutes()-START_H*60)/60*PX_H;
     if(nowY>=0&&nowY<=TOTAL){
-      timeLine=`<div style="position:absolute;left:36px;right:0;top:${nowY.toFixed(1)}px;height:2px;background:var(--danger);z-index:3;pointer-events:none">
+      timeLine=`<div style="position:absolute;left:${GL-4}px;right:0;top:${nowY.toFixed(1)}px;height:2px;background:var(--danger);z-index:10;pointer-events:none">
         <div style="position:absolute;left:-4px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--danger)"></div>
       </div>`;
     }
   }
 
-  // Work job blocks
-  const blocks=dayJobs.filter(j=>j.time).map(job=>{
-    const c=getCust(job.custId);if(!c)return'';
-    const[h,m]=job.time.split(':').map(Number);
-    const y=(h*60+m-START_H*60)/60*PX_H;
-    const dur=job.duration||60;
-    const bh=Math.max(dur/60*PX_H,30);
-    const isWarn=!!warns[job.id];
-    const bg=isWarn?'var(--warning-light)':job.status==='afgerond'?'var(--success-light)':job.status==='onderweg'?'#fff8e6':'var(--primary-light)';
-    const col=isWarn?'var(--warning)':job.status==='afgerond'?'var(--success)':job.status==='onderweg'?'var(--warning)':'var(--primary)';
-    const border=isWarn?'2px solid var(--warning)':'1.5px solid '+col;
-    return`<div onclick="nav('job','${job.id}')" style="position:absolute;left:40px;right:2px;top:${y.toFixed(1)}px;height:${bh.toFixed(0)}px;background:${bg};border:${border};border-radius:8px;padding:4px 8px;cursor:pointer;overflow:hidden;z-index:2;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <div style="font-size:12px;font-weight:800;color:${col};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
-      ${bh>38?`<div style="font-size:10px;color:${col};opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${job.time}${isWarn?' · ⚠️ reistijd':''}</div>`:''}
+  // ── School / geblokkeerde banden (paars, achtergrond) ───────────────────
+  const allBlockedRaw=[
+    ...((availability.w1.blocked||{})[S.calDay]||[]),
+    ...((availability.w2.blocked||{})[S.calDay]||[]),
+  ];
+  // dedupliceer op from+to
+  const seenBands=new Set();
+  const uniqueBlocked=allBlockedRaw.filter(b=>{const k=b.from+b.to;if(seenBands.has(k))return false;seenBands.add(k);return true;});
+
+  const schoolBands=uniqueBlocked.map(b=>{
+    const[fH,fM]=b.from.split(':').map(Number);
+    const[tH,tM]=b.to.split(':').map(Number);
+    const y=(fH*60+fM-START_H*60)/60*PX_H;
+    const bh=(tH*60+tM-fH*60-fM)/60*PX_H;
+    if(y+bh<0||y>TOTAL)return'';
+    const icon=b.type==='school'?'🎒':'💼';
+    const label=b.label||(b.from+'–'+b.to);
+    return`<div style="position:absolute;left:${GL}px;right:0;top:${Math.max(0,y).toFixed(1)}px;height:${Math.min(bh,TOTAL-Math.max(0,y)).toFixed(0)}px;background:rgba(139,92,246,.09);border-left:3px solid var(--purple);z-index:1;pointer-events:none;overflow:hidden">
+      <div style="font-size:10px;font-weight:700;color:var(--purple);padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${icon} ${label}</div>
     </div>`;
   }).join('');
 
-  // Google Calendar blocks (grey, behind work blocks)
+  // ── Vrije vensters (subtiele groene lijn links) ──────────────────────────
+  // toon beschikbaarheidsvensters van de ingelogde werknemer
+  const mySlot=currentUser?getAvailSlot(currentUser,S.calDay):null;
+  let freeBands='';
+  if(mySlot&&mySlot.on){
+    const wins=mySlot.windows||[{from:mySlot.from||'07:00',to:mySlot.to||'20:00'}];
+    freeBands=wins.map(w=>{
+      const[fH,fM]=w.from.split(':').map(Number);
+      const[tH,tM]=w.to.split(':').map(Number);
+      const y=(fH*60+fM-START_H*60)/60*PX_H;
+      const bh=(tH*60+tM-fH*60-fM)/60*PX_H;
+      if(y+bh<0||y>TOTAL)return'';
+      return`<div style="position:absolute;left:${GL}px;width:3px;top:${Math.max(0,y).toFixed(1)}px;height:${Math.min(bh,TOTAL-Math.max(0,y)).toFixed(0)}px;background:var(--success);opacity:.45;z-index:1;pointer-events:none;border-radius:2px"></div>`;
+    }).join('');
+  }
+
+  // ── Google Calendar blokken ───────────────────────────────────────────────
   const gEvents=getGCalForDate(S.calDay);
   const allDayEvents=gEvents.filter(e=>!e.start?.dateTime);
-  const gBlocks=gEvents.filter(e=>e.start?.dateTime).map(e=>{
+  const gTimedEvents=gEvents.filter(e=>e.start?.dateTime);
+  const gBlocks=gTimedEvents.map(e=>{
     const st=new Date(e.start.dateTime);
     const en=new Date(e.end.dateTime);
     const y=((st.getHours()*60+st.getMinutes())-START_H*60)/60*PX_H;
     const durMin=(en-st)/60000;
-    const bh=Math.max(durMin/60*PX_H,20);
+    const bh=Math.max(durMin/60*PX_H,22);
     if(y+bh<0||y>TOTAL)return'';
     const title=esc(e.summary||'(geen titel)');
     const timeStr=st.toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'});
-    return`<div style="position:absolute;left:40px;right:2px;top:${Math.max(0,y).toFixed(1)}px;height:${bh.toFixed(0)}px;background:rgba(107,114,128,.12);border:1.5px solid rgba(107,114,128,.3);border-radius:8px;padding:3px 7px;overflow:hidden;z-index:1">
-      <div style="font-size:11px;font-weight:700;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📅 ${title}</div>
-      ${bh>32?`<div style="font-size:10px;color:var(--text-muted);opacity:.8">${timeStr}</div>`:''}
+    return`<div style="position:absolute;left:${GL}px;right:${GR}px;top:${Math.max(0,y).toFixed(1)}px;height:${bh.toFixed(0)}px;background:rgba(107,114,128,.11);border:1.5px solid rgba(107,114,128,.28);border-radius:8px;padding:3px 7px;overflow:hidden;z-index:2">
+      <div style="font-size:10px;font-weight:700;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📅 ${title}</div>
+      ${bh>32?`<div style="font-size:9px;color:var(--text-muted);opacity:.75">${timeStr}</div>`:''}
     </div>`;
   }).join('');
 
-  const allDayRow=allDayEvents.length?`<div style="display:flex;flex-wrap:wrap;gap:5px;padding:6px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">
+  // ── Klus-blokken met overlapping → kolommen ──────────────────────────────
+  const timedJobs=dayJobs.filter(j=>j.time&&getCust(j.custId));
+  // Bereken y en hoogte per klus
+  const jobItems=timedJobs.map(job=>{
+    const[h,m]=job.time.split(':').map(Number);
+    const y=(h*60+m-START_H*60)/60*PX_H;
+    const dur=job.duration||60;
+    const bh=Math.max(dur/60*PX_H,26);
+    return{job,y,bh,_col:0,_nCols:1};
+  }).sort((a,b)=>a.y-b.y);
+
+  // Greedy lane-toewijzing
+  const laneEnds=[];
+  jobItems.forEach(item=>{
+    let col=laneEnds.findIndex(endY=>item.y>=endY-2); // -2px tolerantie
+    if(col<0){col=laneEnds.length;laneEnds.push(0);}
+    laneEnds[col]=item.y+item.bh;
+    item._col=col;
+  });
+  const nJobCols=Math.max(1,laneEnds.length);
+  // Geef elk item het juiste aantal kolommen mee
+  jobItems.forEach(item=>item._nCols=nJobCols);
+
+  const jobBlocks=jobItems.map(({job,y,bh,_col,_nCols})=>{
+    const c=getCust(job.custId);
+    const isWarn=!!warns[job.id];
+    const bg=isWarn?'var(--warning-light)':job.status==='afgerond'?'var(--success-light)':job.status==='onderweg'?'#fff8e6':'var(--primary-light)';
+    const col=isWarn?'var(--warning)':job.status==='afgerond'?'var(--success)':job.status==='onderweg'?'var(--warning)':'var(--primary)';
+    const border=`2px solid ${col}`;
+    // Positie: verdeel de breedte eerlijk over nCols kolommen
+    const colL=`calc(${GL}px + ${_col} * (100% - ${GL+GR}px) / ${_nCols})`;
+    const colW=`calc((100% - ${GL+GR}px) / ${_nCols} - 2px)`;
+    const icon=job.status==='afgerond'?'✓':job.status==='onderweg'?'🚗':isWarn?'⚠️':'';
+    return`<div onclick="nav('job','${job.id}')" style="position:absolute;left:${colL};width:${colW};top:${y.toFixed(1)}px;height:${bh.toFixed(0)}px;background:${bg};border:${border};border-radius:8px;padding:${bh>40?'5px 7px':'3px 6px'};cursor:pointer;overflow:hidden;z-index:3;box-shadow:0 1px 6px rgba(0,0,0,.1)">
+      <div style="font-size:${_nCols>2?'10':'11'}px;font-weight:800;color:${col};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2">${icon?icon+' ':''}${esc(c.name)}</div>
+      ${bh>36?`<div style="font-size:9px;color:${col};opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${job.time}${job.duration?` · ${job.duration}min`:''}${isWarn?' ⚠️':''}</div>`:''}
+      ${bh>52?`<div style="font-size:9px;color:${col};opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">${esc(c.address||'').split(',')[0]}</div>`:''}
+    </div>`;
+  }).join('');
+
+  const allDayRow=allDayEvents.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px 8px;border-bottom:1px solid var(--border);margin-bottom:4px">
     ${allDayEvents.map(e=>`<span style="font-size:11px;background:rgba(107,114,128,.12);border:1px solid rgba(107,114,128,.25);border-radius:6px;padding:2px 8px;color:var(--text-muted);font-weight:600">📅 ${esc(e.summary||'Agenda-item')}</span>`).join('')}
   </div>`:'';
 
-  // Google connect nudge if not connected
+  // ── Google-knoppenbalk ────────────────────────────────────────────────────
   const gCalBar=gCalConnected()
     ?`<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(66,133,244,.08);border-radius:8px;margin-bottom:8px;font-size:11px;color:#4285f4;font-weight:700">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="#4285f4"><circle cx="12" cy="12" r="10"/></svg>
@@ -3573,25 +3671,52 @@ function renderCalendar(){
         📅 Verbind Google Agenda om persoonlijke afspraken te zien →
       </button>`;
 
+  // ── Dag-samenvatting strip ────────────────────────────────────────────────
+  const dayRev=dayJobs.reduce((s,j)=>{const c=getCust(j.custId);return s+(c?.price||0);},0);
+  const warnCount=Object.keys(warns).length;
+  const noTimeCount=dayJobs.filter(j=>!j.time).length;
+  const summaryItems=[];
+  if(dayJobs.length) summaryItems.push(`🧹 ${dayJobs.length} klus${dayJobs.length!==1?'sen':''}`);
+  if(dayRev>0)       summaryItems.push(`💶 €${dayRev}`);
+  if(warnCount)      summaryItems.push(`<span style="color:var(--warning)">⚠️ ${warnCount} reistijd</span>`);
+  if(noTimeCount)    summaryItems.push(`<span style="color:var(--text-muted)">⏰ ${noTimeCount} zonder tijd</span>`);
+  if(uniqueBlocked.length) summaryItems.push(`<span style="color:var(--purple)">🎒 geblokkeerd</span>`);
+  const daySummary=summaryItems.length?`<div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 10px;background:var(--gray-light);border-radius:8px;margin-bottom:8px;font-size:11px;font-weight:700">${summaryItems.join('<span style="color:var(--border)"> · </span>')}</div>`:'';
+
+  // ── Klussen zonder tijdstip ───────────────────────────────────────────────
   const unscheduled=dayJobs.filter(j=>!j.time);
+
   return`
   <div style="background:var(--card);border-radius:var(--radius);padding:10px;margin-bottom:10px;box-shadow:var(--shadow)">
     <div style="display:flex;gap:1px">${dayPills}</div>
   </div>
   ${gCalBar}
+  ${daySummary}
   <div style="background:var(--card);border-radius:var(--radius);padding:12px 8px;box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden">
     ${allDayRow}
     <div style="position:relative;height:${TOTAL}px">
       ${hourLines}
+      ${schoolBands}
+      ${freeBands}
       ${timeLine}
       ${gBlocks}
-      ${blocks}
-      ${!dayJobs.filter(j=>j.time).length&&!gEvents.filter(e=>e.start?.dateTime).length?`<div style="position:absolute;left:40px;right:0;top:${2*PX_H}px;text-align:center;color:var(--text-muted);font-size:13px;padding-top:8px">Geen klussen gepland</div>`:''}
+      ${jobBlocks}
+      ${!timedJobs.length&&!gTimedEvents.length&&!uniqueBlocked.length?`<div style="position:absolute;left:${GL}px;right:0;top:${2*PX_H}px;text-align:center;color:var(--text-muted);font-size:13px;padding-top:8px">Geen klussen gepland</div>`:''}
     </div>
   </div>
   ${unscheduled.length?`<div class="card" style="margin-bottom:10px">
     <div style="font-size:11px;font-weight:800;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">⏰ Nog geen tijdstip (${unscheduled.length})</div>
-    ${unscheduled.map(job=>{const c=getCust(job.custId);return c?`<div onclick="nav('job','${job.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 10px;cursor:pointer;border-radius:10px;background:var(--gray-light);margin-bottom:6px"><div><div style="font-size:13px;font-weight:700">${esc(c.name)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(c.address)}</div></div><span class="badge b-${job.status}">${statusIcon(job.status)}</span></div>`:''}).join('')}
+    ${unscheduled.map(job=>{
+      const c=getCust(job.custId);if(!c)return'';
+      const isWarn=!!warns[job.id];
+      return`<div onclick="nav('job','${job.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 10px;cursor:pointer;border-radius:10px;background:var(--gray-light);margin-bottom:6px;${isWarn?'border:1.5px solid var(--warning)':''}">
+        <div style="min-width:0;flex:1">
+          <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isWarn?'⚠️ ':''}${esc(c.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.address)}</div>
+        </div>
+        <span class="badge b-${job.status}" style="flex-shrink:0;margin-left:8px">${statusIcon(job.status)}</span>
+      </div>`;
+    }).join('')}
   </div>`:''}`;
 }
 function custSearch(q){S.custSearch=q;render()}
@@ -7972,13 +8097,23 @@ function applyRoosterBlocks(worker, blocks){
     const label=(type==='school'?'School':'Werk')+' '+schoolFrom+'–'+schoolTo;
     availability[worker].blocked[ds].push({from,to,label,type,schoolFrom,schoolTo});
 
-    // Beschikbaarheid voor die dag: alleen vrij als er >60 min vóór vertrek te werken is
+    // Beschikbaarheid voor die dag: vrij vóór school en/of ná school (mits ≥60 min)
     if(!availability[worker].exceptions)availability[worker].exceptions={};
     const [fH,fM]=from.split(':').map(Number);
-    const minsBeforeLeaving=fH*60+fM - 7*60; // minuten tussen 07:00 en vertrek
-    availability[worker].exceptions[ds]=minsBeforeLeaving>=60
-      ?{on:true,from:'07:00',to:from}   // werken tot vertrek
-      :{on:false};                        // niet beschikbaar
+    const [tH,tM]=to.split(':').map(Number);
+    const minsBeforeLeaving = fH*60+fM - 7*60;        // min. tussen 07:00 en vertrek
+    const minsAfterSchool   = 20*60 - (tH*60+tM);     // min. tussen thuiskomst en 20:00
+    const windows=[];
+    if(minsBeforeLeaving>=60) windows.push({from:'07:00',to:from});   // ochtendblok
+    if(minsAfterSchool  >=60) windows.push({from:to,     to:'20:00'}); // avondblok
+    if(windows.length===0){
+      availability[worker].exceptions[ds]={on:false};
+    } else if(windows.length===1){
+      availability[worker].exceptions[ds]={on:true,from:windows[0].from,to:windows[0].to};
+    } else {
+      // Zowel voor als na school beschikbaar → sla beide vensters op
+      availability[worker].exceptions[ds]={on:true,from:windows[0].from,to:windows[0].to,windows};
+    }
     totalAdded++;
   });
 
