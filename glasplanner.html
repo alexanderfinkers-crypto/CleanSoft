@@ -599,6 +599,7 @@ function today(){return new Date().toISOString().slice(0,10)}
 function tomorrow(){const d=new Date();d.setDate(d.getDate()+1);return d.toISOString().slice(0,10)}
 function dateFromStr(s){return new Date(s+'T00:00:00')}
 function addDays(dateStr,n){const d=dateFromStr(dateStr);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)}
+function daysBetween(ds1,ds2){return Math.round((dateFromStr(ds2)-dateFromStr(ds1))/86400000)}
 function weekDays(offset=0){
   const days=[],d=new Date(),dow=d.getDay();
   const mon=new Date(d);mon.setDate(d.getDate()-(dow===0?6:dow-1)+offset*7);
@@ -1415,7 +1416,7 @@ function pinConfirm(){
       scheduleMorgenNotif();
       setTimeout(()=>{
         toast('Welkom, '+currentUser.name+'! 👋');
-        checkConceptApprovalNotify();
+        checkConceptApprovalNotify();checkDatePlanningNudge();
       },400);
       if(window._fb){
         // Worker: altijd verbinden; Owner: verbinden als syncEnabled
@@ -1423,7 +1424,7 @@ function pinConfirm(){
           settings.syncEnabled=true;
           saveLocalOnly();
           startFirestoreListener();
-          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();checkConceptApprovalNotify();toast('🔄 Data gesynchroniseerd!');}});
+          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();checkConceptApprovalNotify();checkDatePlanningNudge();toast('🔄 Data gesynchroniseerd!');}});
         }
       }
     };
@@ -1446,7 +1447,7 @@ function renderDashboard(rems){
     <button class="tab ${S.tab==='week'?'active':''}" onclick="setTab('week')">Week</button>
     <button class="tab ${S.tab==='kalender'?'active':''}" onclick="setTab('kalender')">📅</button>
   </div>`;
-  // Concept jobs banner — gesplitst in "jouw beurt" vs "wacht op ander"
+  // Concept jobs banner — gesplitst in "jouw beurt" vs "wacht op ander" vs "nog niet aan de beurt"
   const conceptJobs=jobs.filter(j=>j.status==='concept');
   if(conceptJobs.length){
     const w1n=settings.w1Name||'Ik';
@@ -1455,25 +1456,55 @@ function renderDashboard(rems){
     const otherKey=myKey==='w1'?'w2':'w1';
     const otherName=myKey==='w1'?w2n:w1n;
     const myName=myKey==='w1'?w1n:w2n;
-    const myPending=conceptJobs.filter(j=>!(j.approvals||{})[myKey]);    // JIK moet nog goedkeuren
-    const waitingOnOther=conceptJobs.filter(j=>(j.approvals||{})[myKey]&&!(j.approvals||{})[otherKey]); // IK heb ok, ander niet
     const otherPhone=myKey==='w1'?settings.w2Phone:settings.w1Phone;
+    const td=today();
+
+    // Concept zonder datum: "actief" als scheduledFor binnen 14 dagen OF geen scheduledFor
+    const isActive=j=>j.date||!j.scheduledFor||daysBetween(td,j.scheduledFor)<=14;
+    const daysUntil=j=>j.scheduledFor?daysBetween(td,j.scheduledFor):0;
+
+    const myPending=conceptJobs.filter(j=>!(j.approvals||{})[myKey]);
+    const waitingOnOther=conceptJobs.filter(j=>(j.approvals||{})[myKey]&&!(j.approvals||{})[otherKey]);
+    const myPendingActive=myPending.filter(isActive);
+    const myPendingUpcoming=myPending.filter(j=>!isActive(j));
+    const waitingActive=waitingOnOther.filter(isActive);
+    const waitingUpcoming=waitingOnOther.filter(j=>!isActive(j));
+
+    // Helper: weeklabel voor scheduledFor
+    const weekLabel=sf=>{
+      const d=daysBetween(td,sf);
+      if(d<=7)return'deze week';
+      if(d<=14)return'volgende week';
+      const w=Math.round(d/7);return'over ~'+w+' weken';
+    };
+
+    // AI-suggestie: zoek rond de streefdatum als die beschikbaar is
+    const aiForJob=job=>{
+      if(job.date)return null;
+      const sf=job.scheduledFor;
+      if(!sf)return aiFindBestDate(job.custId,td,21);
+      // Zoek in venster: max(vandaag, sf-7) … sf+7
+      const from=addDays(sf,-7)>=td?addDays(sf,-7):td;
+      return aiFindBestDate(job.custId,from,14);
+    };
 
     const jobRow=(job,needsMyApproval)=>{
       const cc=getCust(job.custId);if(!cc)return'';
-      const app=job.approvals||{w1:false,w2:false};
-      const aiSug=!job.date?aiFindBestDate(job.custId,today(),21):null;
+      const aiSug=aiForJob(job);
+      const hasSF=!job.date&&job.scheduledFor;
+      const dateLabel=job.date?fmtShort(job.date):hasSF?`📅 Datum inplannen (streefdatum: ${fmtShort(job.scheduledFor)})`:' Datum te plannen';
+      const dateLabelColor=job.date?'var(--text-muted)':'var(--warning)';
       return`<div onclick="nav('job','${job.id}')" style="cursor:pointer;background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:6px;border:2px solid ${needsMyApproval?'var(--warning)':'var(--border)'}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${aiSug?'8px':'0'}">
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:700">${esc(cc.name)}</div>
-            <div style="font-size:11px;color:${job.date?'var(--text-muted)':'var(--warning)'};font-weight:${job.date?'400':'700'}">${job.date?fmtShort(job.date):'📅 Datum te plannen'}</div>
+            <div style="font-size:11px;color:${dateLabelColor};font-weight:${job.date?'400':'700'}">${dateLabel}</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0">
             ${needsMyApproval
-              ? `<button onclick="event.stopPropagation();approveJob('${job.id}','${myKey}')" style="padding:8px 14px;border-radius:10px;border:none;background:var(--warning);color:#fff;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Goedkeuren</button>`
-              : `<span style="padding:6px 10px;border-radius:8px;background:var(--success-light);border:1.5px solid var(--success);font-size:11px;font-weight:800;color:var(--success)">✅ ${myName}</span>
-                 <span style="padding:6px 10px;border-radius:8px;background:var(--warning-light);border:1.5px solid var(--warning);font-size:11px;font-weight:800;color:var(--warning)">⏳ ${otherName}</span>`
+              ?`<button onclick="event.stopPropagation();approveJob('${job.id}','${myKey}')" style="padding:8px 14px;border-radius:10px;border:none;background:var(--warning);color:#fff;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Goedkeuren</button>`
+              :`<span style="padding:6px 10px;border-radius:8px;background:var(--success-light);border:1.5px solid var(--success);font-size:11px;font-weight:800;color:var(--success)">✅ ${myName}</span>
+                <span style="padding:6px 10px;border-radius:8px;background:var(--warning-light);border:1.5px solid var(--warning);font-size:11px;font-weight:800;color:var(--warning)">⏳ ${otherName}</span>`
             }
           </div>
         </div>
@@ -1487,32 +1518,61 @@ function renderDashboard(rems){
       </div>`;
     };
 
-    h+=`<div style="border-radius:14px;overflow:hidden;margin-bottom:12px;border:2px solid ${myPending.length?'var(--warning)':'var(--border)'}">`;
-
-    // Sectie 1: mijn goedkeuring vereist (oranje header)
-    if(myPending.length){
-      h+=`<div style="background:var(--warning);padding:10px 14px;display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:13px;font-weight:800;color:#fff">⏳ Jouw goedkeuring vereist (${myPending.length})</div>
-      </div>
-      <div style="background:var(--warning-light);padding:10px 10px 4px">
-        ${myPending.map(j=>jobRow(j,true)).join('')}
-      </div>`;
-    }
-
-    // Sectie 2: wacht op de ander (grijze header)
-    if(waitingOnOther.length){
-      h+=`<div style="background:var(--gray-light);padding:8px 14px;border-top:${myPending.length?'1.5px solid var(--border)':'none'}">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <span style="font-size:11px;font-weight:800;color:var(--text-muted)">Wacht op ${otherName} (${waitingOnOther.length})</span>
-          ${otherPhone?`<button onclick="stuurGoedkeuringNudge()" style="border:none;background:none;color:#25d366;font-size:12px;font-weight:800;cursor:pointer;padding:2px 6px">💬 Stuur herinnering</button>`:''}
+    // Upcoming row (nog niet aan de beurt)
+    const upcomingRow=job=>{
+      const cc=getCust(job.custId);if(!cc)return'';
+      const du=daysUntil(job);
+      const wl=weekLabel(job.scheduledFor);
+      return`<div onclick="nav('job','${job.id}')" style="cursor:pointer;background:var(--card);border-radius:10px;padding:9px 12px;margin-bottom:6px;border:1.5px solid var(--border);opacity:.75;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:700;color:var(--text-muted)">${esc(cc.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Streefdatum ${fmtShort(job.scheduledFor)} — datum inplannen ${wl}</div>
         </div>
-      </div>
-      <div style="background:var(--card);padding:10px 10px 4px">
-        ${waitingOnOther.map(j=>jobRow(j,false)).join('')}
+        <span style="font-size:11px;font-weight:800;color:var(--text-muted);background:var(--gray-light);border-radius:8px;padding:4px 8px;white-space:nowrap">📅 ${du}d</span>
       </div>`;
+    };
+
+    const hasActive=myPendingActive.length||waitingActive.length;
+    const hasUpcoming=myPendingUpcoming.length||waitingUpcoming.length;
+
+    if(hasActive){
+      h+=`<div style="border-radius:14px;overflow:hidden;margin-bottom:12px;border:2px solid ${myPendingActive.length?'var(--warning)':'var(--border)'}">`;
+      if(myPendingActive.length){
+        h+=`<div style="background:var(--warning);padding:10px 14px">
+          <div style="font-size:13px;font-weight:800;color:#fff">⏳ Jouw goedkeuring vereist (${myPendingActive.length})</div>
+        </div>
+        <div style="background:var(--warning-light);padding:10px 10px 4px">
+          ${myPendingActive.map(j=>jobRow(j,true)).join('')}
+        </div>`;
+      }
+      if(waitingActive.length){
+        h+=`<div style="background:var(--gray-light);padding:8px 14px;border-top:${myPendingActive.length?'1.5px solid var(--border)':'none'}">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-size:11px;font-weight:800;color:var(--text-muted)">Wacht op ${otherName} (${waitingActive.length})</span>
+            ${otherPhone?`<button onclick="stuurGoedkeuringNudge()" style="border:none;background:none;color:#25d366;font-size:12px;font-weight:800;cursor:pointer;padding:2px 6px">💬 Stuur herinnering</button>`:''}
+          </div>
+        </div>
+        <div style="background:var(--card);padding:10px 10px 4px">
+          ${waitingActive.map(j=>jobRow(j,false)).join('')}
+        </div>`;
+      }
+      h+=`</div>`;
     }
 
-    h+=`</div>`;
+    // Sectie "nog niet aan de beurt" — ingeklapt tonen
+    if(hasUpcoming){
+      const openUp=S._showUpcomingConcepts===true;
+      const totalUp=myPendingUpcoming.length+waitingUpcoming.length;
+      h+=`<div style="border-radius:14px;overflow:hidden;margin-bottom:12px;border:1.5px solid var(--border)">
+        <div onclick="S._showUpcomingConcepts=!${openUp};render()" style="background:var(--gray-light);padding:9px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer">
+          <span style="font-size:12px;font-weight:800;color:var(--text-muted)">🗓️ Nog niet aan de beurt — datum later inplannen (${totalUp})</span>
+          <span style="color:var(--text-muted);font-size:14px">${openUp?'▲':'▼'}</span>
+        </div>
+        ${openUp?`<div style="background:var(--card);padding:10px 10px 4px">
+          ${[...myPendingUpcoming,...waitingUpcoming].map(upcomingRow).join('')}
+        </div>`:''}
+      </div>`;
+    }
   }
 
   // ── Vandaag goedgekeurde klussen
@@ -1796,7 +1856,7 @@ function renderJobDetail(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div><div style="font-size:20px;font-weight:800">${esc(c.name)}</div>
-        <div style="font-size:13px;color:${job.date?'var(--text-muted)':'var(--warning)'};margin-top:3px;font-weight:${job.date?'400':'700'}">${job.date?fmtLong(job.date):'📅 Datum nog in te plannen'}</div></div>
+        <div style="font-size:13px;color:${job.date?'var(--text-muted)':'var(--warning)'};margin-top:3px;font-weight:${job.date?'400':'700'}">${job.date?fmtLong(job.date):job.scheduledFor?`📅 Datum inplannen — streefdatum ${fmtLong(job.scheduledFor)}`:'📅 Datum nog in te plannen'}</div></div>
         <span class="badge b-${job.status}">${statusIcon(job.status)} ${job.status[0].toUpperCase()+job.status.slice(1)}</span>
       </div>
       <div class="info-rows" style="margin-bottom:0">
@@ -2847,13 +2907,20 @@ function renderAIAvailability(){
               </button>`:''}
             </div>
             ${editable&&weekBlocks.length?`<div style="margin-bottom:10px;padding:10px;background:var(--purple-light);border-radius:10px;border:1.5px solid var(--purple)">
-              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:6px">📚 Gescande blokken</div>
-              ${weekBlocks.map(b=>`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(124,58,237,.15);font-size:12px">
-                <span style="font-size:14px">${b.type==='school'?'🎒':'💼'}</span>
-                <span style="flex:1;font-weight:600">${NL_DAYS_S[dateFromStr(b.date).getDay()]} ${dateFromStr(b.date).getDate()} — ${b.from}–${b.to}</span>
-                <span style="color:var(--text-muted);font-size:11px">${esc(b.label)}${b.isFirst?' 🚗↗':''}${b.isLast?' 🚗↙':''}</span>
-                <button onclick="removeRoosterBlock('${wk}','${b.date}',${b.idx})" style="border:none;background:none;cursor:pointer;font-size:14px;color:var(--danger);padding:0 2px">✕</button>
-              </div>`).join('')}
+              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:6px">📚 School / werk blokken</div>
+              ${weekBlocks.map(b=>{
+                const d=dateFromStr(b.date);
+                const schoolLine=b.schoolFrom&&b.schoolTo?b.schoolFrom+'–'+b.schoolTo:b.from+'–'+b.to;
+                const travelLine=b.schoolFrom&&b.schoolTo?`<span style="opacity:.6"> · geblokkeerd ${b.from}–${b.to}</span>`:'';
+                return`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(124,58,237,.15)">
+                  <span style="font-size:16px">${b.type==='school'?'🎒':'💼'}</span>
+                  <div style="flex:1">
+                    <div style="font-size:13px;font-weight:700">${NL_DAYS_S[d.getDay()].toUpperCase()} ${d.getDate()} · ${schoolLine}</div>
+                    <div style="font-size:10px;color:var(--text-muted)">${esc(b.label)}${travelLine}</div>
+                  </div>
+                  <button onclick="removeRoosterBlock('${wk}','${b.date}',${b.idx})" style="border:none;background:none;cursor:pointer;font-size:16px;color:var(--danger);padding:0 3px;line-height:1">✕</button>
+                </div>`;
+              }).join('')}
             </div>`:''}
             ${dayRows(wk, days)}
           </div>`;
@@ -6941,14 +7008,16 @@ function autoScheduleNext(job){
   const cust=getCust(job.custId);
   if(!cust||!cust.frequency||cust.frequency==='none')return;
   const days=FREQ_DAYS[cust.frequency];if(!days)return;
-  // Don't create if there's already a future job
-  const td=dateFromStr(today());
-  const hasFuture=jobs.some(j=>j.custId===cust.id&&j.id!==job.id&&j.status!=='afgerond'&&dateFromStr(j.date)>td);
+  const td=today();
+  // Al een toekomstige klus (met datum of streefdatum)?
+  const hasFuture=jobs.some(j=>j.custId===cust.id&&j.id!==job.id&&j.status!=='afgerond'&&((j.date&&j.date>=td)||(j.scheduledFor&&j.scheduledFor>=td)));
   if(hasFuture)return;
-  const nextDate=addDays(job.date,days);
-  const nextJob={id:uid(),custId:cust.id,date:nextDate,time:job.time||'',status:'concept',approvals:{w1:false,w2:false},work:job.work||[],mats:job.mats||[],notes:job.notes||'',qtys:job.qtys||undefined,created:new Date().toISOString()};
+  const scheduledFor=addDays(job.date,days); // streefdatum (doelweek)
+  // Concept zónder vaste datum — datum wordt 1-2 weken van tevoren ingepland
+  const nextJob={id:uid(),custId:cust.id,date:'',scheduledFor,time:job.time||'',status:'concept',approvals:{w1:false,w2:false},work:job.work||[],mats:job.mats||[],notes:job.notes||'',qtys:job.qtys||undefined,created:new Date().toISOString()};
   jobs.push(nextJob);saveAll();
-  setTimeout(()=>toast('📋 Volgende klus als concept aangemaakt: '+fmtShort(nextDate)),800);
+  const weeksAway=Math.round(days/7);
+  setTimeout(()=>toast('📋 Vervolgklus aangemaakt — datum inplannen over ~'+weeksAway+' weken (rond '+fmtShort(scheduledFor)+')'),800);
 }
 
 function toggleWT(id){
@@ -7511,17 +7580,23 @@ function showCompletionModal(jobId){
   const j=getJob(jobId);const c=j?getCust(j.custId):null;
   const durs=[30,45,60,90,120,150,180];
 
-  // Check if a next job was auto-created
-  const nextJob=jobs.find(x=>x.custId===j?.custId&&x.id!==jobId&&x.status==='concept'&&x.date>j.date);
+  // Check if a next job was auto-created (met of zonder datum)
+  const nextJob=jobs.find(x=>x.custId===j?.custId&&x.id!==jobId&&x.status==='concept'&&(x.scheduledFor>j.date||x.date>j.date));
   const noFreq=c&&(!c.frequency||c.frequency==='none');
 
   let nextBlock='';
   if(nextJob){
+    const hasDate=!!nextJob.date;
+    const targetDate=nextJob.date||nextJob.scheduledFor;
+    const weeksAway=targetDate?Math.round(daysBetween(today(),targetDate)/7):null;
     nextBlock=`<div style="background:var(--success-light);border:2px solid var(--success);border-radius:12px;padding:12px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
       <span style="font-size:22px">📋</span>
       <div>
         <div style="font-size:13px;font-weight:800;color:var(--success)">Vervolgklus aangemaakt!</div>
-        <div style="font-size:12px;color:var(--text-muted)">Concept voor ${fmtLong(nextJob.date)} — wacht op goedkeuring</div>
+        <div style="font-size:12px;color:var(--text-muted)">${hasDate
+          ?`Concept voor ${fmtLong(nextJob.date)} — wacht op goedkeuring`
+          :`Streefdatum: ${fmtLong(targetDate)}${weeksAway?` (~${weeksAway} weken)`:''} — datum wordt ${weeksAway&&weeksAway>2?'1-2 weken van tevoren':'binnenkort'} ingepland`
+        }</div>
       </div>
     </div>`;
   } else if(noFreq){
@@ -7766,18 +7841,20 @@ async function callClaudeVision(worker, weekOffset, base64, mimeType){
     return dow+'='+ds;
   }).join(', ');
 
-  const prompt=`Dit is een screenshot van een school- of werkrooster. Herken alle tijdsloten waarop iemand bezet is (school, werk, stage, bijbaan, etc.).
+  const prompt=`Dit is een screenshot van een school- of werkrooster. Herken alle lessen/blokken per dag.
 
 Weekdata: ${dayMap}
 
 Geef je antwoord UITSLUITEND als een JSON array, geen markdown of uitleg:
-[{"date":"YYYY-MM-DD","startTime":"HH:MM","endTime":"HH:MM","type":"school","label":"School"}]
+[{"date":"YYYY-MM-DD","startTime":"HH:MM","endTime":"HH:MM","type":"school","label":"Wiskunde"}]
 
 Regels:
 - Koppel dagnamen (ma/di/wo/do/vr/za/zo of Mon/Tue etc.) aan de datum uit weekdata
 - 24-uursformaat voor tijden
 - type: "school" of "werk"
-- Pauzes en tussenuren weglaten`;
+- Geef ELKE les afzonderlijk terug — de app voegt ze per dag samen tot één blok
+- Pauzes en tussenuren weglaten (geen "pauze" of "vrij" blokken)
+- Label = vaknaam of "School" als onleesbaar`;
 
   toast('⏳ Rooster wordt gescand...');
 
@@ -7817,22 +7894,38 @@ Regels:
     // Store in temp var to avoid quoting issues in onclick
     _pendingBlocks={worker,blocks};
 
-    const preview=blocks.map(b=>{
-      const d=dateFromStr(b.date);
-      return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
-        <span>${b.type==='school'?'🎒':'💼'}</span>
-        <span style="flex:1"><b>${NL_DAYS_S[d.getDay()]} ${d.getDate()}</b></span>
-        <span style="color:var(--text-muted)">${b.startTime}–${b.endTime}</span>
-        <span style="font-size:11px;color:var(--text-muted)">${esc(b.label)}</span>
-      </div>`;
-    }).join('');
+    // Preview: toon één regel per dag (samengevoegd), niet per les
+    const previewByDate={};
+    blocks.forEach(b=>{if(!previewByDate[b.date])previewByDate[b.date]=[];previewByDate[b.date].push(b);});
+    Object.values(previewByDate).forEach(arr=>arr.sort((a,b)=>a.startTime.localeCompare(b.startTime)));
+
+    const preview=Object.entries(previewByDate)
+      .sort(([a],[b])=>a.localeCompare(b))
+      .map(([ds,dayBlocks])=>{
+        const d=dateFromStr(ds);
+        const first=dayBlocks[0],last=dayBlocks[dayBlocks.length-1];
+        const schoolFrom=first.startTime,schoolTo=last.endTime;
+        const blockedFrom=addMinutesToTime(schoolFrom,-45);
+        const blockedTo  =addMinutesToTime(schoolTo,  45);
+        const type=first.type||'school';
+        const lesLabel=dayBlocks.length>1?dayBlocks.length+' lessen':'1 les';
+        return`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+          <span style="font-size:18px">${type==='school'?'🎒':'💼'}</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:800">${NL_DAYS_S[d.getDay()].toUpperCase()} ${d.getDate()} — ${schoolFrom}–${schoolTo}
+              <span style="font-size:10px;font-weight:600;color:var(--text-muted);margin-left:4px">(${lesLabel})</span>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:1px">Geblokkeerd: ${blockedFrom}–${blockedTo} <span style="opacity:.65">· 45 min reistijd heen+terug</span></div>
+          </div>
+        </div>`;
+      }).join('');
 
     showModal(`
       <div class="modal-title">✅ Rooster herkend</div>
       <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
-        Tijden worden opgeslagen <b>met 45 min reistijd</b> voor en na elk blok.
+        Per dag wordt <b>één blok</b> aangemaakt: schooltijden <b>+ 45 min reistijd</b> aan beide kanten.
       </p>
-      <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:14px;max-height:260px;overflow-y:auto">
+      <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:14px;max-height:280px;overflow-y:auto">
         ${preview}
       </div>
       <button class="btn btn-primary btn-block" onclick="confirmRoosterBlocks()">✅ Toevoegen aan agenda</button>
@@ -7861,35 +7954,28 @@ function applyRoosterBlocks(worker, blocks){
 
   // Groepeer per dag en sorteer op starttijd
   const byDate={};
-  blocks.forEach(b=>{
-    if(!byDate[b.date])byDate[b.date]=[];
-    byDate[b.date].push(b);
-  });
+  blocks.forEach(b=>{if(!byDate[b.date])byDate[b.date]=[];byDate[b.date].push(b);});
   Object.values(byDate).forEach(arr=>arr.sort((a,b)=>a.startTime.localeCompare(b.startTime)));
 
   let totalAdded=0;
   Object.entries(byDate).forEach(([ds,dayBlocks])=>{
     if(!availability[worker].blocked[ds])availability[worker].blocked[ds]=[];
-    dayBlocks.forEach((b,i)=>{
-      const isFirst=i===0;
-      const isLast=i===dayBlocks.length-1;
-      // Reistijd alleen vóór de eerste les (heen) en ná de laatste les (terug)
-      // Tussenliggende lessen: exacte tijden — je bent al op school
-      const from=isFirst?addMinutesToTime(b.startTime,-45):b.startTime;
-      const to  =isLast ?addMinutesToTime(b.endTime,   45):b.endTime;
-      availability[worker].blocked[ds].push({
-        from, to,
-        label: b.label||'Bezet',
-        type:  b.type||'school',
-        isFirst, isLast  // opslaan zodat de weergave het correct toont
-      });
-    });
-    totalAdded+=dayBlocks.length;
+    // Alle lessen samenvoegen tot één dagblok per dag
+    const first=dayBlocks[0];
+    const last=dayBlocks[dayBlocks.length-1];
+    const schoolFrom=first.startTime;   // echte starttijd (zonder reistijd)
+    const schoolTo=last.endTime;        // echte eindtijd (zonder reistijd)
+    const from=addMinutesToTime(schoolFrom,-45); // inclusief 45 min reistijd heen
+    const to  =addMinutesToTime(schoolTo,  45);  // inclusief 45 min reistijd terug
+    const type=first.type||'school';
+    // Label toont de echte schooltijden, blok bevat de reistijd
+    const label=(type==='school'?'School':'Werk')+' '+schoolFrom+'–'+schoolTo;
+    availability[worker].blocked[ds].push({from,to,label,type,schoolFrom,schoolTo});
+    totalAdded++;
   });
 
-  saveAll();
-  render();
-  toast('✅ '+totalAdded+' blokken toegevoegd — reistijd bij eerste en laatste les');
+  saveAll();render();
+  toast('✅ '+totalAdded+' dag'+(totalAdded!==1?'en':'')+' ingeblokkeerd in agenda — reistijd inbegrepen');
 }
 
 function removeRoosterBlock(worker, date, idx){
@@ -8329,6 +8415,31 @@ function checkConceptApprovalNotify(){
   }
 }
 
+// Controleer of datumloze concepts nu binnen 14 dagen vallen → nudge om datum in te plannen
+let _lastNudgeKey='';
+function checkDatePlanningNudge(){
+  if(!currentUser)return;
+  const td=today();
+  const needDate=jobs.filter(j=>j.status==='concept'&&!j.date&&j.scheduledFor&&daysBetween(td,j.scheduledFor)<=14&&daysBetween(td,j.scheduledFor)>=0);
+  if(!needDate.length){_lastNudgeKey='';return;}
+  const key=needDate.map(j=>j.id).sort().join(',');
+  if(key===_lastNudgeKey)return;
+  _lastNudgeKey=key;
+  if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
+    try{
+      const names=needDate.slice(0,3).map(j=>{const c=getCust(j.custId);return(c?.name||'?')+' · '+fmtShort(j.scheduledFor);});
+      const n=new Notification(
+        `📅 ${needDate.length} klus${needDate.length!==1?'sen hebben':'heeft'} nog geen datum!`,
+        {body:'Plan nu een datum in:\n'+names.join('\n')+(needDate.length>3?'\n...':'')+'\nTik om te bekijken',
+         tag:'date-planning-nudge',renotify:true,requireInteraction:true,
+         icon:'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'%3E%3Crect width=\'192\' height=\'192\' rx=\'38\' fill=\'%232563eb\'/%3E%3Ctext y=\'130\' x=\'96\' text-anchor=\'middle\' font-size=\'120\'%3E%F0%9F%93%85%3C/text%3E%3C/svg%3E'
+        }
+      );
+      n.onclick=()=>{window.focus();S.view='dashboard';S.tab='vandaag';render();window.scrollTo(0,0);};
+    }catch(e){}
+  }
+}
+
 function buildConceptWhatsAppMsg(pendingJobs){
   const naam=currentUser?.name||(currentUser?.role==='owner'?(settings.w1Name||'Eigenaar'):(settings.w2Name||'Collega'));
   let msg=`📋 Goedkeuring gevraagd\n\n`;
@@ -8396,14 +8507,14 @@ function maybeAskNotifications(){
   setTimeout(async()=>{
     await requestNotificationPermission();
     checkRemindersAndNotify();
-    checkConceptApprovalNotify();
+    checkConceptApprovalNotify();checkDatePlanningNudge();
   },3000);
 }
 document.addEventListener('click',maybeAskNotifications,{once:true});
 
 // Check on visibility restore
 document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden){checkRemindersAndNotify();checkConceptApprovalNotify();}
+  if(!document.hidden){checkRemindersAndNotify();checkConceptApprovalNotify();checkDatePlanningNudge();}
 });
 
 // ════════════════════════════════════════════════
