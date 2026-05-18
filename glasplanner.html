@@ -2820,6 +2820,7 @@ function renderAIAvailability(){
   // Dagrows — editable of read-only
   function dayRows(wk, days){
     const editable=canEdit(wk);
+    const wBlocked=availability[wk].blocked||{};
     return days.map(ds=>{
       const d=dateFromStr(ds);
       const dow=d.getDay();
@@ -2832,36 +2833,52 @@ function renderAIAvailability(){
       const dayName=NL_DAYS_S[dow]+' '+d.getDate();
       const dim=isPast?'opacity:.45;':'';
 
+      // School/werk blokken voor deze specifieke dag
+      const dayBlocks=wBlocked[ds]||[];
+      const schoolBadge=dayBlocks.map((b,bi)=>{
+        const icon=b.type==='school'?'🎒':'💼';
+        const timeLabel=b.schoolFrom&&b.schoolTo?b.schoolFrom+'–'+b.schoolTo:b.from+'–'+b.to;
+        const rmBtn=editable&&!isPast
+          ?`<button onclick="event.stopPropagation();removeRoosterBlock('${wk}','${ds}',${bi})"
+              style="border:none;background:none;cursor:pointer;color:var(--danger);font-size:12px;padding:0 2px;line-height:1;margin-left:2px">✕</button>`:'';
+        return`<span style="display:inline-flex;align-items:center;gap:3px;background:var(--purple-light);border:1.5px solid var(--purple);border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;color:var(--purple);white-space:nowrap">
+          ${icon} ${timeLabel}${rmBtn}
+        </span>`;
+      }).join('');
+
       if(!editable){
-        // Read-only weergave
-        return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);${dim}">
-          <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
-          <span style="width:36px;height:36px;border-radius:18px;border:2px solid;flex-shrink:0;font-size:14px;display:inline-flex;align-items:center;justify-content:center;
-            border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
-            ${on?'✓':'✗'}
-          </span>
-          ${on
-            ? `<span style="font-size:12px;color:var(--text-muted);flex:1">${from} – ${to}</span>`
-            : `<span style="font-size:12px;color:var(--text-muted);flex:1">Niet beschikbaar</span>`}
+        return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
+            ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap;flex:1">${schoolBadge}</div>`:''}
+            <span style="width:32px;height:32px;border-radius:16px;border:2px solid;flex-shrink:0;font-size:13px;display:inline-flex;align-items:center;justify-content:center;
+              border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
+              ${on?'✓':'✗'}
+            </span>
+            ${!schoolBadge?(on?`<span style="font-size:12px;color:var(--text-muted)">${from}–${to}</span>`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`):''}
+          </div>
         </div>`;
       }
 
-      // Editable weergave
-      return`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);${dim}">
-        <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
-        <button onclick="${isPast?'':`toggleAvail('${wk}','${ds}',${on})`}"
-          style="width:36px;height:36px;border-radius:18px;border:2px solid;flex-shrink:0;font-size:14px;cursor:${isPast?'default':'pointer'};
-          border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
-          ${on?'✓':'✗'}
-        </button>
-        ${on?`
-        <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0">
-          <input type="time" value="${from}" style="flex:1;min-width:0;padding:6px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-            onchange="setAvailTime('${wk}','${ds}','from',this.value)">
-          <span style="font-size:12px;color:var(--text-muted)">–</span>
-          <input type="time" value="${to}" style="flex:1;min-width:0;padding:6px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-            onchange="setAvailTime('${wk}','${ds}','to',this.value)">
-        </div>`:`<span style="font-size:12px;color:var(--text-muted);flex:1">Niet beschikbaar</span>`}
+      // Editable weergave — school badge + toggle + tijden op zelfde rij
+      return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
+          ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap">${schoolBadge}</div>`:''}
+          <button onclick="${isPast?'':`toggleAvail('${wk}','${ds}',${on})`}"
+            style="width:34px;height:34px;border-radius:17px;border:2px solid;flex-shrink:0;font-size:13px;cursor:${isPast?'default':'pointer'};margin-left:auto;
+            border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
+            ${on?'✓':'✗'}
+          </button>
+          ${on?`
+          <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
+            <input type="time" value="${from}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
+              onchange="setAvailTime('${wk}','${ds}','from',this.value)">
+            <span style="font-size:12px;color:var(--text-muted)">–</span>
+            <input type="time" value="${to}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
+              onchange="setAvailTime('${wk}','${ds}','to',this.value)">
+          </div>`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
+        </div>
       </div>`;
     }).join('');
   }
@@ -2894,8 +2911,6 @@ function renderAIAvailability(){
         <div class="avail-title">📅 ${weekTitle}</div>
         ${['w1','w2'].map(wk=>{
           const editable=canEdit(wk);
-          const wBlocked=availability[wk].blocked||{};
-          const weekBlocks=days.flatMap(ds=>(wBlocked[ds]||[]).map((b,i)=>({...b,date:ds,idx:i})));
           return`<div class="card" style="margin-bottom:10px;padding:12px 14px;${!editable?'opacity:.85;':''}">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
               <div style="display:flex;align-items:center;gap:6px">
@@ -2906,22 +2921,6 @@ function renderAIAvailability(){
                 📷 Scan rooster
               </button>`:''}
             </div>
-            ${editable&&weekBlocks.length?`<div style="margin-bottom:10px;padding:10px;background:var(--purple-light);border-radius:10px;border:1.5px solid var(--purple)">
-              <div style="font-size:11px;font-weight:800;color:var(--purple);margin-bottom:6px">📚 School / werk blokken</div>
-              ${weekBlocks.map(b=>{
-                const d=dateFromStr(b.date);
-                const schoolLine=b.schoolFrom&&b.schoolTo?b.schoolFrom+'–'+b.schoolTo:b.from+'–'+b.to;
-                const travelLine=b.schoolFrom&&b.schoolTo?`<span style="opacity:.6"> · geblokkeerd ${b.from}–${b.to}</span>`:'';
-                return`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(124,58,237,.15)">
-                  <span style="font-size:16px">${b.type==='school'?'🎒':'💼'}</span>
-                  <div style="flex:1">
-                    <div style="font-size:13px;font-weight:700">${NL_DAYS_S[d.getDay()].toUpperCase()} ${d.getDate()} · ${schoolLine}</div>
-                    <div style="font-size:10px;color:var(--text-muted)">${esc(b.label)}${travelLine}</div>
-                  </div>
-                  <button onclick="removeRoosterBlock('${wk}','${b.date}',${b.idx})" style="border:none;background:none;cursor:pointer;font-size:16px;color:var(--danger);padding:0 3px;line-height:1">✕</button>
-                </div>`;
-              }).join('')}
-            </div>`:''}
             ${dayRows(wk, days)}
           </div>`;
         }).join('')}
@@ -7959,29 +7958,44 @@ function applyRoosterBlocks(worker, blocks){
 
   let totalAdded=0;
   Object.entries(byDate).forEach(([ds,dayBlocks])=>{
-    if(!availability[worker].blocked[ds])availability[worker].blocked[ds]=[];
-    // Alle lessen samenvoegen tot één dagblok per dag
+    // Vervang bestaand blok voor deze dag (geen duplicaten bij herhaald scannen)
+    availability[worker].blocked[ds]=[];
+
+    // Eerste les − 45 min reistijd → laatste les + 45 min reistijd = één volledig blok
     const first=dayBlocks[0];
     const last=dayBlocks[dayBlocks.length-1];
-    const schoolFrom=first.startTime;   // echte starttijd (zonder reistijd)
-    const schoolTo=last.endTime;        // echte eindtijd (zonder reistijd)
-    const from=addMinutesToTime(schoolFrom,-45); // inclusief 45 min reistijd heen
-    const to  =addMinutesToTime(schoolTo,  45);  // inclusief 45 min reistijd terug
+    const schoolFrom=first.startTime;            // echte schoolstarttijd
+    const schoolTo=last.endTime;                 // echte schooleindtijd
+    const from=addMinutesToTime(schoolFrom,-45); // vertrek van huis
+    const to  =addMinutesToTime(schoolTo,  45);  // thuis na school
     const type=first.type||'school';
-    // Label toont de echte schooltijden, blok bevat de reistijd
     const label=(type==='school'?'School':'Werk')+' '+schoolFrom+'–'+schoolTo;
     availability[worker].blocked[ds].push({from,to,label,type,schoolFrom,schoolTo});
+
+    // Beschikbaarheid voor die dag: alleen vrij als er >60 min vóór vertrek te werken is
+    if(!availability[worker].exceptions)availability[worker].exceptions={};
+    const [fH,fM]=from.split(':').map(Number);
+    const minsBeforeLeaving=fH*60+fM - 7*60; // minuten tussen 07:00 en vertrek
+    availability[worker].exceptions[ds]=minsBeforeLeaving>=60
+      ?{on:true,from:'07:00',to:from}   // werken tot vertrek
+      :{on:false};                        // niet beschikbaar
     totalAdded++;
   });
 
   saveAll();render();
-  toast('✅ '+totalAdded+' dag'+(totalAdded!==1?'en':'')+' ingeblokkeerd in agenda — reistijd inbegrepen');
+  toast('✅ '+totalAdded+' dag'+(totalAdded!==1?'en':'')+' ingepland in agenda');
 }
 
 function removeRoosterBlock(worker, date, idx){
   if(!availability[worker].blocked?.[date])return;
   availability[worker].blocked[date].splice(idx,1);
-  if(!availability[worker].blocked[date].length)delete availability[worker].blocked[date];
+  if(!availability[worker].blocked[date].length){
+    delete availability[worker].blocked[date];
+    // Verwijder ook de beschikbaarheidsuitzondering die door de scan was gezet
+    if(availability[worker].exceptions?.[date]!==undefined){
+      delete availability[worker].exceptions[date];
+    }
+  }
   saveRender();
 }
 
