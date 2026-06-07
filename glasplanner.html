@@ -426,6 +426,12 @@ a.ir-val{color:var(--primary);text-decoration:none}
 
 <script>
 'use strict';
+// Globale foutopvang — toont fout zichtbaar in de app
+window.onerror=function(msg,src,line,col,err){
+  const m=document.getElementById('main');
+  if(m)m.innerHTML='<div style="padding:20px;background:#fef2f2;border:2px solid #dc2626;border-radius:12px;margin:16px;font-family:monospace"><b style="color:#dc2626;font-size:15px">⚠️ JavaScript fout</b><br><br><b>Fout:</b> '+msg+'<br><b>Regel:</b> '+line+'<br><br><span style="font-size:11px;color:#6b7280">Kopieer dit bericht en stuur het door zodat het opgelost kan worden.</span></div>';
+  return false;
+};
 
 // ════════════════════════════════════════════════
 //  CONSTANTS
