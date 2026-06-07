@@ -3188,20 +3188,25 @@ function saveSettingsSection(section){
 
 function renderSettings(){
   if(!isOwner()){nav('ai');return'';}
+  // Open standaard de eerste sectie als er nog niets open is
+  if(!S._stSections||Object.keys(S._stSections).length===0){
+    if(!S._stSections)S._stSections={};
+    S._stSections['bedrijf']=true;
+  }
 
   // Helper: accordeon-sectie bouwen
   function stSection(key, icon, title, subtitle, content){
     const open=_stOpen(key);
-    return`<div style="background:var(--card);border-radius:14px;box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden">
-      <button onclick="_stToggle('${key}')" style="width:100%;display:flex;align-items:center;gap:12px;padding:16px;background:none;border:none;cursor:pointer;text-align:left">
+    return`<div style="background:var(--card);border-radius:14px;box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden;border:1.5px solid ${open?'var(--primary)':'var(--border)'}">
+      <button onclick="_stToggle('${key}')" style="width:100%;display:flex;align-items:center;gap:12px;padding:16px;background:${open?'var(--primary-light)':'none'};border:none;cursor:pointer;text-align:left;transition:background .15s">
         <span style="font-size:22px;flex-shrink:0">${icon}</span>
         <div style="flex:1;min-width:0">
           <div style="font-size:14px;font-weight:800;color:var(--text)">${title}</div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subtitle}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${open?'Klik om te sluiten':subtitle}</div>
         </div>
-        <span style="font-size:20px;color:var(--text-muted);flex-shrink:0;transition:transform .2s;display:inline-block;transform:rotate(${open?180:0}deg)">⌄</span>
+        <span style="font-size:18px;color:${open?'var(--primary)':'var(--text-muted)'};flex-shrink:0;transition:transform .2s;display:inline-block;transform:rotate(${open?180:0}deg);font-weight:900">▾</span>
       </button>
-      ${open?`<div style="padding:0 16px 16px">${content}<button onclick="saveSettingsSection('${key}')" class="btn btn-primary btn-block" style="margin-top:14px">✓ Opslaan</button></div>`:''}
+      ${open?`<div style="padding:0 16px 16px;border-top:1px solid var(--border)">${content}<button onclick="saveSettingsSection('${key}')" class="btn btn-primary btn-block" style="margin-top:14px">✓ Opslaan</button></div>`:''}
     </div>`;
   }
 
@@ -3355,6 +3360,7 @@ function renderSettings(){
 
   return`
     <button class="back-btn" onclick="nav('ai')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
+    <div style="font-size:12px;color:var(--text-muted);margin:0 2px 14px;line-height:1.5">Tik op een onderdeel om het uit te klappen en aan te passen.</div>
 
     ${stSection('bedrijf','🏢','Bedrijf & Tarieven',subBedrijf,sBedrijf)}
     ${stSection('medewerkers','👷','Medewerkers',subMedewerkers,sMedewerkers)}
