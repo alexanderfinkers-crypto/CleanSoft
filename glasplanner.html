@@ -2861,178 +2861,214 @@ function renderAIAutoplan(){
 //  RENDER: AI AVAILABILITY
 // ════════════════════════════════════════════════
 function renderAIAvailability(){
-  const weeks=[0,1,2,3];
   const td=today();
   const myKey=currentUser?.role==='owner'?'w1':'w2';
+  const otherKey=myKey==='w1'?'w2':'w1';
+  const wo=S.availWeekOffset||0;
+  const days=weekDays(wo);
+  const prevWo=Math.max(0,wo-1);
+  const nextWo=wo+1;
 
-  // Helper: mag ik dit worker-profiel bewerken?
-  function canEdit(wk){return wk===myKey;}
+  // ── Week-navigator label ──────────────────────────────────────────────────
+  const mon=dateFromStr(days[0]);const sun=dateFromStr(days[6]);
+  const sameMonth=mon.getMonth()===sun.getMonth();
+  const weekLabel=wo===0?'Deze week':wo===1?'Volgende week'
+    :(mon.getDate()+' '+(sameMonth?'':'NL_MONTHS_S[mon.getMonth()]+' ')+' – '+sun.getDate()+' '+['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][sun.getMonth()]);
 
-  // Dagrows — editable of read-only
-  function dayRows(wk, days){
-    const editable=canEdit(wk);
-    const wBlocked=availability[wk].blocked||{};
-    return days.map(ds=>{
-      const d=dateFromStr(ds);
-      const dow=d.getDay();
-      const isPast=ds<td;
-      const isToday=ds===td;
-      const slot=getAvailSlot(wk,ds);
-      const on=slot.on;
-      const from=slot.from||'07:00';
-      const to=slot.to||'17:00';
-      const dayName=NL_DAYS_S[dow]+' '+d.getDate();
-      const dim=isPast?'opacity:.45;':'';
+  // ── Dagbalk-renderer ──────────────────────────────────────────────────────
+  function dayBar(wk, ds, editable){
+    const d=dateFromStr(ds);
+    const dow=d.getDay();
+    const isPast=ds<td;
+    const isToday=ds===td;
+    const slot=getAvailSlot(wk,ds);
+    const on=slot.on;
+    const from=slot.from||'07:00';
+    const to=slot.to||'17:00';
+    const dayBlocks=(availability[wk].blocked||{})[ds]||[];
+    const hasSchool=dayBlocks.length>0;
 
-      // School/werk blokken voor deze specifieke dag
-      const dayBlocks=wBlocked[ds]||[];
-      const schoolBadge=dayBlocks.map((b,bi)=>{
-        const icon=b.type==='school'?'🎒':'💼';
-        const timeLabel=b.schoolFrom&&b.schoolTo?b.schoolFrom+'–'+b.schoolTo:b.from+'–'+b.to;
-        const rmBtn=editable&&!isPast
-          ?`<button onclick="event.stopPropagation();removeRoosterBlock('${wk}','${ds}',${bi})"
-              style="border:none;background:none;cursor:pointer;color:var(--danger);font-size:12px;padding:0 2px;line-height:1;margin-left:2px">✕</button>`:'';
-        return`<span style="display:inline-flex;align-items:center;gap:3px;background:var(--purple-light);border:1.5px solid var(--purple);border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;color:var(--purple);white-space:nowrap">
-          ${icon} ${timeLabel}${rmBtn}
-        </span>`;
-      }).join('');
+    // Kleur en status voor de balk
+    const barBg=isPast?'var(--gray-light)':hasSchool?'rgba(139,92,246,.07)':on?'rgba(22,163,74,.07)':'var(--gray-light)';
+    const barBorder=isPast?'var(--border)':hasSchool?'var(--purple)':on?'var(--success)':'var(--border)';
+    const dayColor=isToday?'var(--primary)':isPast?'var(--text-muted)':'var(--text)';
 
-      // Bouw lijst van beschikbare tijdvensters voor weergave
-      const slotWindows=slot.windows||( on?[{from,to}]:[] );
-      const windowBadges=slotWindows.map(w=>
-        `<span style="font-size:12px;color:var(--success);font-weight:700;white-space:nowrap">✓ ${w.from}–${w.to}</span>`
-      ).join('<span style="font-size:11px;color:var(--text-muted);margin:0 2px">&</span>');
+    // NL dag + datum
+    const NL_FULL=['Zo','Ma','Di','Wo','Do','Vr','Za'];
+    const NL_MON=['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
+    const dayLabel=`${NL_FULL[dow]} ${d.getDate()} ${NL_MON[d.getMonth()]}`;
 
+    // Tijdvenster-info (beschikbaar voor + na school)
+    const slotWindows=slot.windows||(on?[{from,to}]:[]);
+    const windowStr=slotWindows.map(w=>`${w.from}–${w.to}`).join(' & ');
+
+    // School badges met verwijder-knop
+    const schoolPills=dayBlocks.map((b,bi)=>{
+      const icon=b.type==='school'?'🎒':'💼';
+      const lbl=b.schoolFrom&&b.schoolTo?b.schoolFrom+'–'+b.schoolTo:b.from+'–'+b.to;
+      const rmBtn=editable&&!isPast
+        ?`<button onclick="event.stopPropagation();removeRoosterBlock('${wk}','${ds}',${bi})"
+            style="border:none;background:none;cursor:pointer;color:var(--purple);font-size:14px;padding:0 2px;line-height:1;margin-left:3px;opacity:.7">✕</button>`:'';
+      return`<span style="display:inline-flex;align-items:center;background:rgba(139,92,246,.15);border:1.5px solid var(--purple);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;color:var(--purple);white-space:nowrap">${icon} ${lbl}${rmBtn}</span>`;
+    }).join('');
+
+    // ── Read-only balk ────────────────────────────────────────────────────
+    if(!editable){
+      return`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:${barBg};border:1.5px solid ${barBorder};margin-bottom:6px;${isPast?'opacity:.5':''}">
+        <div style="min-width:80px">
+          <div style="font-size:13px;font-weight:700;color:${dayColor}">${dayLabel}</div>
+        </div>
+        <div style="flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+          ${hasSchool?schoolPills:''}
+          ${!hasSchool&&on?`<span style="font-size:12px;color:var(--success);font-weight:700">${windowStr}</span>`:''}
+          ${!hasSchool&&!on?`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`:''}
+          ${hasSchool&&slotWindows.length?`<span style="font-size:11px;color:var(--success);font-weight:600">Vrij: ${windowStr}</span>`:''}
+        </div>
+        <div style="width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:14px;background:${on?'var(--success)':'var(--gray-light)'};color:${on?'#fff':'var(--text-muted)'}">
+          ${on?'✓':'✗'}
+        </div>
+      </div>`;
+    }
+
+    // ── Editable balk ────────────────────────────────────────────────────
+    return`<div style="display:flex;align-items:center;gap:10px;padding:12px;border-radius:12px;background:${barBg};border:1.5px solid ${barBorder};margin-bottom:8px;${isPast?'opacity:.5':''}">
+      <div style="min-width:80px">
+        <div style="font-size:13px;font-weight:800;color:${dayColor}">${dayLabel}</div>
+        ${isToday?`<div style="font-size:10px;color:var(--primary);font-weight:700;margin-top:1px">Vandaag</div>`:''}
+      </div>
+      <div style="flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+        ${hasSchool?schoolPills:''}
+        ${hasSchool&&slotWindows.length?`<span style="font-size:11px;color:var(--success);font-weight:600">Vrij: ${windowStr}</span>`:''}
+        ${!hasSchool&&on
+          ?`<div style="display:flex;align-items:center;gap:4px">
+              <input type="time" value="${from}" style="padding:5px 8px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);background:var(--card);width:90px"
+                onchange="setAvailTime('${wk}','${ds}','from',this.value)">
+              <span style="color:var(--text-muted);font-size:13px">–</span>
+              <input type="time" value="${to}" style="padding:5px 8px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text);background:var(--card);width:90px"
+                onchange="setAvailTime('${wk}','${ds}','to',this.value)">
+            </div>`
+          :''}
+        ${!hasSchool&&!on?`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`:''}
+      </div>
+      ${!isPast?`<button onclick="toggleAvail('${wk}','${ds}',${on})"
+        style="width:42px;height:42px;border-radius:21px;border:2px solid ${on?'var(--success)':'var(--border)'};background:${on?'var(--success)':'var(--card)'};color:${on?'#fff':'var(--text-muted)'};font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s">
+        ${on?'✓':'✗'}
+      </button>`:'<div style="width:42px"></div>'}
+    </div>`;
+  }
+
+  // ── Standaard schema renderer ─────────────────────────────────────────────
+  function defaultSchemaRows(wk){
+    const editable=wk===myKey;
+    return[1,2,3,4,5,6,0].map(dow=>{
+      const slot=availability[wk].days[dow];
+      const isOn=typeof slot==='object'?slot.on:!!slot;
+      const from=typeof slot==='object'?(slot.from||'07:00'):'07:00';
+      const to=typeof slot==='object'?(slot.to||'17:00'):'17:00';
+      const NL_FULL=['Zo','Ma','Di','Wo','Do','Vr','Za'];
       if(!editable){
-        return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
-            ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap">${schoolBadge}</div>`:''}
-            <span style="width:32px;height:32px;border-radius:16px;border:2px solid;flex-shrink:0;font-size:13px;display:inline-flex;align-items:center;justify-content:center;
-              border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
-              ${on?'✓':'✗'}
-            </span>
-            ${on
-              ? `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${windowBadges}</div>`
-              : `<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
-          </div>
+        return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="width:28px;font-size:12px;font-weight:700;color:var(--text-muted)">${NL_FULL[dow]}</div>
+          <div style="width:32px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:13px;background:${isOn?'var(--success-light)':'var(--gray-light)'};border:2px solid ${isOn?'var(--success)':'var(--border)'};color:${isOn?'var(--success)':'var(--text-muted)'};">${isOn?'✓':'✗'}</div>
+          <span style="font-size:12px;color:var(--text-muted)">${isOn?from+' – '+to:'Vrij'}</span>
         </div>`;
       }
-
-      // Editable weergave — school badge + toggle + tijden op zelfde rij
-      // Als er schoolblokken zijn: toon de vrije vensters als tekst (geen losse inputs)
-      const hasSchool=dayBlocks.length>0;
-      return`<div style="padding:8px 0;border-bottom:1px solid var(--border);${dim}">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <div style="width:44px;font-size:12px;font-weight:700;color:${isToday?'var(--primary)':'var(--text-muted)'};flex-shrink:0">${dayName}</div>
-          ${schoolBadge?`<div style="display:flex;gap:4px;flex-wrap:wrap">${schoolBadge}</div>`:''}
-          <button onclick="${isPast?'':`toggleAvail('${wk}','${ds}',${on})`}"
-            style="width:34px;height:34px;border-radius:17px;border:2px solid;flex-shrink:0;font-size:13px;cursor:${isPast?'default':'pointer'};margin-left:auto;
-            border-color:${on?'var(--success)':'var(--border)'};background:${on?'var(--success-light)':'var(--gray-light)'}">
-            ${on?'✓':'✗'}
-          </button>
-          ${on
-            ? (hasSchool
-                ? `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">${windowBadges}</div>`
-                : `<div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1">
-                    <input type="time" value="${from}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-                      onchange="setAvailTime('${wk}','${ds}','from',this.value)">
-                    <span style="font-size:12px;color:var(--text-muted)">–</span>
-                    <input type="time" value="${to}" style="flex:1;min-width:60px;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;color:var(--text)"
-                      onchange="setAvailTime('${wk}','${ds}','to',this.value)">
-                  </div>`)
-            : `<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
-        </div>
+      return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="width:28px;font-size:12px;font-weight:700;color:var(--text)">${NL_FULL[dow]}</div>
+        <button onclick="toggleWeekday('${wk}',${dow})"
+          style="width:38px;height:38px;border-radius:19px;border:2px solid ${isOn?'var(--success)':'var(--border)'};background:${isOn?'var(--success)':'var(--card)'};color:${isOn?'#fff':'var(--text-muted)'};font-size:15px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center">
+          ${isOn?'✓':'✗'}
+        </button>
+        ${isOn?`
+          <input type="time" value="${from}" style="flex:1;padding:6px 8px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text)"
+            onchange="setWeekdayTime('${wk}',${dow},'from',this.value)">
+          <span style="color:var(--text-muted)">–</span>
+          <input type="time" value="${to}" style="flex:1;padding:6px 8px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--text)"
+            onchange="setWeekdayTime('${wk}',${dow},'to',this.value)">`
+        :`<span style="font-size:12px;color:var(--text-muted)">Vrij</span>`}
       </div>`;
     }).join('');
   }
 
+  const showDefaults=S._showAvailDefaults;
+
   return`
     <button class="back-btn" onclick="nav('ai','hub')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
 
-    <div class="card" style="margin-bottom:16px">
-      <div style="font-size:13px;font-weight:700;margin-bottom:10px">👤 Naam</div>
-      <div class="grid2">
-        <div class="form-group" style="margin-bottom:0">
+    <!-- ── Week navigator ──────────────────────────────────── -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--card);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;box-shadow:var(--shadow)">
+      <button onclick="S.availWeekOffset=${prevWo};render()" style="width:38px;height:38px;border-radius:10px;border:2px solid var(--border);background:${wo===0?'var(--gray-light)':'var(--card)'};font-size:18px;cursor:${wo===0?'default':'pointer'};color:${wo===0?'var(--border)':'var(--text)'};display:flex;align-items:center;justify-content:center" ${wo===0?'disabled':''}>‹</button>
+      <div style="text-align:center">
+        <div style="font-size:15px;font-weight:800">${wo===0?'Deze week':wo===1?'Volgende week':'Over '+(wo)+' weken'}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:1px">${dateFromStr(days[0]).getDate()} ${['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][dateFromStr(days[0]).getMonth()]} – ${dateFromStr(days[6]).getDate()} ${['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][dateFromStr(days[6]).getMonth()]}</div>
+      </div>
+      <button onclick="S.availWeekOffset=${nextWo};render()" style="width:38px;height:38px;border-radius:10px;border:2px solid var(--border);background:var(--card);font-size:18px;cursor:pointer;color:var(--text);display:flex;align-items:center;justify-content:center">›</button>
+    </div>
+
+    <!-- ── Mijn beschikbaarheid ────────────────────────────── -->
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div>
+          <div style="font-size:15px;font-weight:800;color:var(--primary)">👤 ${esc(availability[myKey].name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Jouw beschikbaarheid</div>
+        </div>
+        <button onclick="openRoosterScan('${myKey}',${wo})" style="display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:10px;border:none;background:var(--purple);color:#fff;font-size:12px;font-weight:800;cursor:pointer">
+          📷 Scan rooster
+        </button>
+      </div>
+      ${days.map(ds=>dayBar(myKey,ds,true)).join('')}
+    </div>
+
+    <!-- ── Collega (read-only) ─────────────────────────────── -->
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:var(--text-muted)">👤 ${esc(availability[otherKey].name)}</div>
+        <span style="font-size:10px;background:var(--gray-light);color:var(--text-muted);border-radius:6px;padding:2px 8px;font-weight:700">🔒 alleen lezen</span>
+      </div>
+      ${days.map(ds=>dayBar(otherKey,ds,false)).join('')}
+    </div>
+
+    <!-- ── Standaard schema (inklapbaar) ─────────────────────── -->
+    <div class="card" style="margin-bottom:12px">
+      <button onclick="S._showAvailDefaults=!S._showAvailDefaults;render()" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:none;border:none;cursor:pointer;padding:0">
+        <div>
+          <div style="font-size:14px;font-weight:800">⚙️ Standaard schema</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;text-align:left">Vaste werktijden per weekdag — geldt voor alle weken</div>
+        </div>
+        <span style="font-size:18px;color:var(--text-muted);transition:transform .2s;display:inline-block;transform:rotate(${showDefaults?180:0}deg)">⌄</span>
+      </button>
+      ${showDefaults?`
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-size:12px;font-weight:800;color:var(--primary);margin-bottom:8px">👤 ${esc(availability[myKey].name)}</div>
+        ${defaultSchemaRows(myKey)}
+        <div style="font-size:12px;font-weight:800;color:var(--text-muted);margin:14px 0 8px">👤 ${esc(availability[otherKey].name)} <span style="font-size:10px;background:var(--gray-light);border-radius:6px;padding:2px 7px">🔒</span></div>
+        ${defaultSchemaRows(otherKey)}
+      </div>`:''}
+    </div>
+
+    <!-- ── Naam wijzigen ──────────────────────────────────────── -->
+    <div class="card" style="margin-bottom:12px">
+      <button onclick="S._showAvailNames=!S._showAvailNames;render()" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:none;border:none;cursor:pointer;padding:0">
+        <div style="font-size:14px;font-weight:800">✏️ Namen aanpassen</div>
+        <span style="font-size:18px;color:var(--text-muted);display:inline-block;transform:rotate(${S._showAvailNames?180:0}deg)">⌄</span>
+      </button>
+      ${S._showAvailNames?`
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+        <div class="form-group" style="margin-bottom:10px">
           <label class="form-label">${esc(availability.w1.name)}</label>
           ${myKey==='w1'
-            ? `<input class="form-control" id="av-w1name" type="text" value="${esc(availability.w1.name)}" placeholder="Jouw naam" oninput="setWorkerName('w1',this.value)">`
-            : `<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w1.name)}</div>`}
+            ?`<input class="form-control" id="av-w1name" type="text" value="${esc(availability.w1.name)}" placeholder="Jouw naam" oninput="setWorkerName('w1',this.value)">`
+            :`<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w1.name)}</div>`}
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label class="form-label">${esc(availability.w2.name)}</label>
           ${myKey==='w2'
-            ? `<input class="form-control" id="av-w2name" type="text" value="${esc(availability.w2.name)}" placeholder="Jouw naam" oninput="setWorkerName('w2',this.value)">`
-            : `<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w2.name)}</div>`}
+            ?`<input class="form-control" id="av-w2name" type="text" value="${esc(availability.w2.name)}" placeholder="Jouw naam" oninput="setWorkerName('w2',this.value)">`
+            :`<div style="padding:10px 12px;background:var(--gray-light);border-radius:10px;font-size:13px;color:var(--text-muted)">🔒 ${esc(availability.w2.name)}</div>`}
         </div>
-      </div>
+      </div>`:''}
     </div>
 
-    ${weeks.map(wo=>{
-      const days=weekDays(wo);
-      const weekTitle=wo===0?'Deze week':wo===1?'Volgende week':'Week van '+fmtShort(days[0]);
-      return`<div class="avail-section">
-        <div class="avail-title">📅 ${weekTitle}</div>
-        ${['w1','w2'].map(wk=>{
-          const editable=canEdit(wk);
-          return`<div class="card" style="margin-bottom:10px;padding:12px 14px;${!editable?'opacity:.85;':''}">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-              <div style="display:flex;align-items:center;gap:6px">
-                <div style="font-size:13px;font-weight:800;color:${editable?'var(--primary)':'var(--text-muted)'}">👷 ${esc(availability[wk].name)}</div>
-                ${!editable?`<span style="font-size:10px;background:var(--gray-light);color:var(--text-muted);border-radius:6px;padding:2px 7px;font-weight:700">🔒 alleen lezen</span>`:''}
-              </div>
-              ${editable?`<button class="btn btn-sm" style="background:var(--purple);color:#fff;gap:5px;padding:6px 10px;font-size:11px" onclick="openRoosterScan('${wk}',${wo})">
-                📷 Scan rooster
-              </button>`:''}
-            </div>
-            ${dayRows(wk, days)}
-          </div>`;
-        }).join('')}
-      </div>`;
-    }).join('')}
-
-    <div class="card">
-      <div style="font-size:13px;font-weight:700;margin-bottom:12px">⚙️ Standaard werktijden per dag</div>
-      ${['w1','w2'].map(wk=>{
-        const editable=canEdit(wk);
-        return`<div style="margin-bottom:16px">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-            <div style="font-size:12px;font-weight:800;color:${editable?'var(--primary)':'var(--text-muted)'}">👷 ${esc(availability[wk].name)}</div>
-            ${!editable?`<span style="font-size:10px;background:var(--gray-light);color:var(--text-muted);border-radius:6px;padding:2px 7px;font-weight:700">🔒 alleen lezen</span>`:''}
-          </div>
-          ${[1,2,3,4,5,6,0].map(dow=>{
-            const slot=availability[wk].days[dow];
-            const isOn=typeof slot==='object'?slot.on:!!slot;
-            const from=typeof slot==='object'?(slot.from||'07:00'):'07:00';
-            const to=typeof slot==='object'?(slot.to||'17:00'):'17:00';
-            if(!editable){
-              return`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
-                <div style="width:28px;font-size:11px;font-weight:700;color:var(--text-muted)">${NL_DAYS_S[dow]}</div>
-                <span style="width:34px;height:34px;border-radius:17px;border:2px solid;flex-shrink:0;font-size:13px;display:inline-flex;align-items:center;justify-content:center;
-                  border-color:${isOn?'var(--success)':'var(--border)'};background:${isOn?'var(--success-light)':'var(--gray-light)'}">
-                  ${isOn?'✓':'✗'}
-                </span>
-                <span style="font-size:12px;color:var(--text-muted)">${isOn?from+' – '+to:'Niet beschikbaar'}</span>
-              </div>`;
-            }
-            return`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
-              <div style="width:28px;font-size:11px;font-weight:700;color:var(--text-muted)">${NL_DAYS_S[dow]}</div>
-              <button onclick="toggleWeekday('${wk}',${dow})"
-                style="width:34px;height:34px;border-radius:17px;border:2px solid;flex-shrink:0;font-size:13px;cursor:pointer;
-                border-color:${isOn?'var(--success)':'var(--border)'};background:${isOn?'var(--success-light)':'var(--gray-light)'}">
-                ${isOn?'✓':'✗'}
-              </button>
-              ${isOn?`
-              <input type="time" value="${from}" style="flex:1;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600"
-                onchange="setWeekdayTime('${wk}',${dow},'from',this.value)">
-              <span style="font-size:11px;color:var(--text-muted)">–</span>
-              <input type="time" value="${to}" style="flex:1;padding:5px 6px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-weight:600"
-                onchange="setWeekdayTime('${wk}',${dow},'to',this.value)">`:`<span style="font-size:12px;color:var(--text-muted)">Niet beschikbaar</span>`}
-            </div>`;
-          }).join('')}
-        </div>`;
-      }).join('')}
-    </div>
     <input type="file" id="rooster-file-input" accept="image/*" style="display:none" onchange="handleRoosterFile(this)">`;
 }
 
@@ -3113,153 +3149,221 @@ function renderAIInsights(){
 // ════════════════════════════════════════════════
 //  RENDER: SETTINGS
 // ════════════════════════════════════════════════
+// ── Instellingen helpers ────────────────────────────────────────────────────
+function _stOpen(key){return S._stSections?.[key]??false;}
+function _stToggle(key){if(!S._stSections)S._stSections={};S._stSections[key]=!_stOpen(key);render();}
+
+function saveSettingsSection(section){
+  // Lees alle velden uit ongeacht welke sectie — sla alles op
+  const rd=id=>document.getElementById(id);
+  if(rd('st-home'))   settings.homeAddress=rd('st-home').value.trim();
+  if(rd('st-pc'))     settings.homePostcode=rd('st-pc').value.trim();
+  if(rd('st-rate'))   settings.hourlyRate=parseFloat(rd('st-rate').value)||45;
+  if(rd('st-max'))    settings.maxJobsPerDay=parseInt(rd('st-max').value)||5;
+  if(rd('st-dagdoel'))settings.dagDoel=parseInt(rd('st-dagdoel').value)||250;
+  if(rd('st-w1'))     settings.w1Name=rd('st-w1').value.trim()||'Ik';
+  if(rd('st-w2'))     settings.w2Name=rd('st-w2').value.trim()||'Collega';
+  if(rd('st-w1phone'))settings.w1Phone=rd('st-w1phone').value.trim().replace(/\s/g,'');
+  if(rd('st-w2phone'))settings.w2Phone=rd('st-w2phone').value.trim().replace(/\s/g,'');
+  if(rd('st-notifTime'))settings.morgenNotifTime=rd('st-notifTime').value||'20:00';
+  const opin=rd('st-opin')?.value?.trim();
+  const wpin=rd('st-wpin')?.value?.trim();
+  if(opin?.length===4&&/^\d{4}$/.test(opin))settings.ownerPin=opin;
+  if(wpin?.length===4&&/^\d{4}$/.test(wpin))settings.workerPin=wpin;
+  const gclient=rd('st-gclient')?.value?.trim();
+  if(gclient)settings.googleClientId=gclient;
+  if(rd('st-review'))settings.googleReviewUrl=rd('st-review').value.trim();
+  const apikey=rd('st-apikey')?.value?.trim();
+  if(apikey)settings.claudeApiKey=apikey;
+  availability.w1.name=settings.w1Name;
+  availability.w2.name=settings.w2Name;
+  saveAll();
+  scheduleMorgenNotif();
+  // Sluit de sectie en toon bevestiging
+  if(!S._stSections)S._stSections={};
+  S._stSections[section]=false;
+  render();
+  toast('✅ Opgeslagen');
+}
+
 function renderSettings(){
   if(!isOwner()){nav('ai');return'';}
-  return`
-    <button class="back-btn" onclick="nav('ai')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
-    <div class="card">
-      <div class="settings-section">
-        <div class="settings-section-title">Locatie & Tarief</div>
-        <div class="form-group"><label class="form-label">Thuisbasis adres</label><input class="form-control" id="st-home" type="text" placeholder="Bijv. Dorpsstraat 1, Amsterdam" value="${esc(settings.homeAddress)}"></div>
-        <div class="form-group"><label class="form-label">Thuisbasis postcode (4 cijfers)</label><input class="form-control" id="st-pc" type="number" placeholder="1011" value="${settings.homePostcode}" min="1000" max="9999"></div>
-        <div class="form-group"><label class="form-label">Uurtarief (€/uur)</label><input class="form-control" id="st-rate" type="number" placeholder="45" value="${settings.hourlyRate}" min="0"></div>
-        <div class="grid2">
-          <div class="form-group"><label class="form-label">Max. klussen per dag</label><input class="form-control" id="st-max" type="number" placeholder="5" value="${settings.maxJobsPerDay}" min="1" max="20"></div>
-          <div class="form-group"><label class="form-label">🎯 Dagomzetdoel (€)</label><input class="form-control" id="st-dagdoel" type="number" placeholder="250" value="${settings.dagDoel||250}" min="0" step="25"></div>
+
+  // Helper: accordeon-sectie bouwen
+  function stSection(key, icon, title, subtitle, content){
+    const open=_stOpen(key);
+    return`<div style="background:var(--card);border-radius:14px;box-shadow:var(--shadow);margin-bottom:10px;overflow:hidden">
+      <button onclick="_stToggle('${key}')" style="width:100%;display:flex;align-items:center;gap:12px;padding:16px;background:none;border:none;cursor:pointer;text-align:left">
+        <span style="font-size:22px;flex-shrink:0">${icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:800;color:var(--text)">${title}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subtitle}</div>
         </div>
+        <span style="font-size:20px;color:var(--text-muted);flex-shrink:0;transition:transform .2s;display:inline-block;transform:rotate(${open?180:0}deg)">⌄</span>
+      </button>
+      ${open?`<div style="padding:0 16px 16px">${content}<button onclick="saveSettingsSection('${key}')" class="btn btn-primary btn-block" style="margin-top:14px">✓ Opslaan</button></div>`:''}
+    </div>`;
+  }
+
+  // Helper: nette invoerrij met label + hint
+  function stRow(label, hint, inputHtml){
+    return`<div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">${label}</label>
+      ${inputHtml}
+      ${hint?`<div style="font-size:11px;color:var(--text-muted);margin-top:5px;line-height:1.5">${hint}</div>`:''}
+    </div>`;
+  }
+  function stInput(id, type, value, placeholder, extra=''){
+    return`<input id="${id}" type="${type}" value="${esc(String(value??''))}" placeholder="${placeholder}" ${extra}
+      style="width:100%;padding:13px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px;font-weight:600;color:var(--text);background:var(--card);box-sizing:border-box;-webkit-appearance:none"
+      onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'">`;
+  }
+  function stTime(id, value){
+    return`<input id="${id}" type="time" value="${esc(value)}"
+      style="width:100%;padding:13px 14px;border:2px solid var(--border);border-radius:12px;font-size:22px;font-weight:800;color:var(--text);background:var(--card);box-sizing:border-box"
+      onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'">`;
+  }
+  function stPin(id, value){
+    return`<input id="${id}" type="tel" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" value="${esc(value)}" placeholder="••••"
+      style="width:100%;padding:16px 14px;border:2px solid var(--border);border-radius:12px;font-size:28px;font-weight:900;color:var(--text);background:var(--card);box-sizing:border-box;letter-spacing:10px;text-align:center"
+      onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'"
+      oninput="this.value=this.value.replace(/\\D/g,'').slice(0,4)">`;
+  }
+
+  // ── Sectie-inhoud ───────────────────────────────────────────────────────
+
+  const sBedrijf=`
+    ${stRow('Thuisbasis adres','Startpunt voor routeberekening',stInput('st-home','text',settings.homeAddress,'Dorpsstraat 1, Amsterdam'))}
+    ${stRow('Thuisbasis postcode','4 cijfers — voor regio-berekening',stInput('st-pc','number',settings.homePostcode,'1011','min="1000" max="9999"'))}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      ${stRow('Uurtarief','€ per uur',stInput('st-rate','number',settings.hourlyRate,'45','min="0"'))}
+      ${stRow('Dagomzetdoel','Streefbedrag per dag',`<div style="display:flex;align-items:center;border:2px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card)" onfocusin="this.style.borderColor='var(--primary)'" onfocusout="this.style.borderColor='var(--border)'"><span style="padding:13px 10px;font-size:15px;font-weight:800;color:var(--text-muted);background:var(--gray-light);border-right:1.5px solid var(--border)">€</span><input id="st-dagdoel" type="number" value="${settings.dagDoel||250}" min="0" step="25" style="flex:1;padding:13px 10px;border:none;outline:none;font-size:15px;font-weight:700;color:var(--text);background:transparent"></div>`)}
+    </div>
+    ${stRow('Max. klussen per dag','De planning stopt na dit aantal',stInput('st-max','number',settings.maxJobsPerDay,'5','min="1" max="20"'))}`;
+
+  const sMedewerkers=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Medewerker 1 (eigenaar)</div>
+        ${stRow('Naam','',stInput('st-w1','text',settings.w1Name,'Ik'))}
+        ${stRow('WhatsApp nummer','',stInput('st-w1phone','tel',settings.w1Phone||'','0612345678'))}
       </div>
-      <div class="settings-section">
-        <div class="settings-section-title">Medewerkers</div>
-        <div class="grid2">
-          <div class="form-group"><label class="form-label">Naam medewerker 1</label><input class="form-control" id="st-w1" type="text" value="${esc(settings.w1Name)}" placeholder="Ik"></div>
-          <div class="form-group"><label class="form-label">Naam medewerker 2</label><input class="form-control" id="st-w2" type="text" value="${esc(settings.w2Name)}" placeholder="Collega"></div>
-          <div class="form-group"><label class="form-label">WhatsApp nr. medewerker 1</label><input class="form-control" id="st-w1phone" type="tel" value="${esc(settings.w1Phone||'')}" placeholder="0612345678"></div>
-          <div class="form-group"><label class="form-label">WhatsApp nr. medewerker 2</label><input class="form-control" id="st-w2phone" type="tel" value="${esc(settings.w2Phone||'')}" placeholder="0612345678"></div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">📲 Avond-routeoverzicht</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">Stuur elke avond automatisch een WhatsApp-samenvatting van de volgende dag naar jezelf en je collega. Stel het tijdstip in waarop je de melding wilt krijgen.</div>
-        <div class="form-group" style="margin-bottom:8px"><label class="form-label">Meldingstijdstip</label>
-          <input class="form-control" id="st-notifTime" type="time" value="${esc(settings.morgenNotifTime||'20:00')}">
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:4px">
-          <button class="btn btn-ghost" style="flex:1;font-size:12px" onclick="requestNotificationPermission().then(()=>toast('✅ Meldingen ingeschakeld!'))">
-            🔔 ${typeof Notification!=='undefined'&&Notification.permission==='granted'?'Meldingen aan ✓':'Meldingen inschakelen'}
-          </button>
-          <button class="btn btn-ghost" style="flex:1;font-size:12px" onclick="stuurMorgenRoute()">📲 Nu sturen (test)</button>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">🔐 PIN-codes</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Stel 4-cijferige PIN-codes in om toegang te beveiligen.</div>
-        <div class="grid2">
-          <div class="form-group"><label class="form-label">PIN eigenaar</label><input class="form-control" id="st-opin" type="password" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="1234" value="${esc(settings.ownerPin||'1234')}"></div>
-          <div class="form-group"><label class="form-label">PIN medewerker</label><input class="form-control" id="st-wpin" type="password" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="0000" value="${esc(settings.workerPin||'0000')}"></div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">📅 Google Agenda</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">Koppel je persoonlijke Google Agenda — jouw afspraken verschijnen als grijze blokken in het Kalender-overzicht.</div>
-        ${location.protocol==='file:'?`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#92400e;line-height:1.6">
-          ⚠️ <b>Vereisten:</b> Open de app via <b>https://</b> (niet via file://). Upload naar GitHub Pages of gebruik een lokale server.<br>
-          <a href="https://console.cloud.google.com" target="_blank" style="color:#0066bb;font-weight:700">→ console.cloud.google.com</a> — gratis, 10 minuten instellen.
-        </div>`:`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#166534;line-height:1.6">
-          ✅ <b>Je gebruikt https://</b> — Google Agenda kan hier werken. Voer je Client ID in en klik Verbinden.
-        </div>`}
-        <div class="form-group">
-          <label class="form-label">Google Client ID</label>
-          <input class="form-control" id="st-gclient" type="text" placeholder="12345-abc.apps.googleusercontent.com"
-            value="${esc(settings.googleClientId||'')}"
-            style="font-size:12px">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:5px">Maak aan via Google Cloud Console → Google Auth Platform → Clients → OAuth 2.0 → Web App → origin: <b>${location.origin}</b></div>
-        </div>
-        ${gCalConnected()
-          ?`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;margin-bottom:10px">
-              <span style="font-size:18px">✅</span>
-              <div style="flex:1;font-size:13px;font-weight:700;color:var(--success)">Google Agenda verbonden</div>
-              <button onclick="disconnectGoogleCalendar()" style="padding:5px 10px;border:1.5px solid var(--success);border-radius:8px;background:none;color:var(--success);font-size:11px;font-weight:700;cursor:pointer">Ontkoppelen</button>
-            </div>`
-          :`<button onclick="connectGoogleCalendar()" class="btn btn-block" style="background:#4285f4;color:#fff;margin-bottom:10px">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-              Verbind Google Agenda
-            </button>`}
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">⭐ Google Reviews</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">Jouw Google Review link — wordt automatisch meegestuurd via WhatsApp na een afgeronde klus.</div>
-        <div class="form-group"><label class="form-label">Google Review URL</label><input class="form-control" id="st-review" type="url" placeholder="https://g.page/r/..." value="${esc(settings.googleReviewUrl||'')}"></div>
-      </div>
-      <div class="settings-section">
-        <div class="settings-section-title">🤖 Claude AI (rooster scannen)</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">
-          Voer je Claude API-sleutel in om foto's van roosters automatisch te scannen.<br>
-          Sleutel ophalen: <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary);font-weight:700">console.anthropic.com</a>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Claude API-sleutel</label>
-          <input class="form-control" id="st-apikey" type="password" placeholder="sk-ant-api03-..." value="${esc(settings.claudeApiKey||'')}" autocomplete="off">
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-outline btn-sm" style="flex:1" onclick="testClaudeKey()">🔌 Test verbinding</button>
-          <div id="claude-test-result" style="font-size:12px;font-weight:700;flex:1;text-align:center"></div>
-        </div>
-      </div>
-      <button class="btn btn-primary btn-lg" onclick="saveSettings()">✓ Instellingen opslaan</button>
-      <div class="divider"></div>
-      <div class="settings-section">
-        <div class="settings-section-title">🔥 Live sync met collega (Firebase)</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.7">
-          Realtime synchronisatie — wat jij toevoegt ziet je collega direct, en andersom. Geen codes nodig.
-        </div>
-        ${settings.syncEnabled
-          ?`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
-              <span style="font-size:20px">🟢</span>
-              <div style="flex:1">
-                <div style="font-size:13px;font-weight:800;color:var(--success)">Live sync actief</div>
-                ${settings.lastSync?`<div style="font-size:11px;color:var(--text-muted)">Laatste sync: ${new Date(settings.lastSync).toLocaleString('nl-NL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`:''}
-              </div>
-              <div id="sync-status" style="font-size:11px;font-weight:700"></div>
-            </div>
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-              <button class="btn btn-outline" style="flex:1" onclick="copySyncCode()">📋 Link voor collega kopiëren</button>
-              <button class="btn btn-danger" style="flex:1" onclick="disableSync()">🔴 Sync uitschakelen</button>
-            </div>`
-          :`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 14px;margin-bottom:12px">
-              <div style="font-size:12px;color:#92400e;line-height:1.6">⚠️ Sync staat <b>uit</b>. Schakel in als eigenaar, daarna kan de collega dezelfde GitHub link openen en is alles direct gesynchroniseerd.</div>
-            </div>
-            <div id="sync-status" style="font-size:11px;font-weight:700;margin-bottom:8px"></div>
-            <button id="sync-create-btn" class="btn btn-primary btn-block" onclick="createSyncRoom()">🔥 Firebase sync inschakelen</button>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-              <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Ben je de <b>collega</b>? Klik hier om data op te halen:</div>
-              <button id="sync-join-btn" class="btn btn-outline btn-block" onclick="joinSyncRoom()">🔗 Verbinden als collega</button>
-            </div>`
-        }
-      </div>
-      <div class="divider"></div>
-      <div class="settings-section">
-        <div class="settings-section-title">💾 Data backup</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;line-height:1.6">
-          Maak een backup vóór je een nieuwe versie van de app installeert. Je kunt de backup later terugzetten.
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-primary" style="flex:1" onclick="exportBackup()">⬇️ Backup downloaden</button>
-          <button class="btn btn-outline" style="flex:1" onclick="document.getElementById('backup-import-input').click()">📂 Backup terugzetten</button>
-        </div>
-        <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(this)">
-      </div>
-      <div class="divider"></div>
-      <div class="settings-section">
-        <div class="settings-section-title">📱 App op telefoon installeren</div>
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.6">
-          <b style="color:var(--text)">Stap 1</b> — Download het app-bestand hieronder<br>
-          <b style="color:var(--text)">Stap 2</b> — Stuur het bestand via WhatsApp of mail naar je telefoon<br>
-          <b style="color:var(--text)">Stap 3</b> — Open het bestand in Chrome (Android) of Safari (iPhone)<br>
-          <b style="color:var(--text)">Stap 4</b> — Tik op <i>Delen → Zet op beginscherm</i> om het als app te installeren
-        </div>
-        <button class="btn btn-primary btn-block" onclick="downloadApp()">⬇️ App-bestand downloaden (.html)</button>
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Medewerker 2 (collega)</div>
+        ${stRow('Naam','',stInput('st-w2','text',settings.w2Name,'Collega'))}
+        ${stRow('WhatsApp nummer','',stInput('st-w2phone','tel',settings.w2Phone||'','0612345678'))}
       </div>
     </div>`;
+
+  const sMeldingen=`
+    ${stRow('Tijdstip avond-routemelding','Je ontvangt dan een WhatsApp met de klussen van morgen',stTime('st-notifTime',settings.morgenNotifTime||'20:00'))}
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-ghost" style="flex:1" onclick="requestNotificationPermission().then(()=>toast('✅ Meldingen ingeschakeld!'))">
+        🔔 ${typeof Notification!=='undefined'&&Notification.permission==='granted'?'Meldingen aan ✓':'Meldingen inschakelen'}
+      </button>
+      <button class="btn btn-ghost" style="flex:1" onclick="stuurMorgenRoute()">📲 Test sturen</button>
+    </div>`;
+
+  const sPins=`
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Gebruik een 4-cijferige code. Tip: gebruik voor eigenaar een andere PIN dan voor de collega.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div>
+        <div style="font-size:12px;font-weight:700;color:var(--primary);margin-bottom:8px">🔑 Eigenaar</div>
+        ${stPin('st-opin',settings.ownerPin||'1234')}
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:8px">🔑 Medewerker</div>
+        ${stPin('st-wpin',settings.workerPin||'0000')}
+      </div>
+    </div>`;
+
+  const sGcal=`
+    ${location.protocol==='file:'
+      ?`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#92400e;line-height:1.6">⚠️ Gebruik <b>https://</b> — niet via file://. <a href="https://console.cloud.google.com" target="_blank" style="color:#0066bb;font-weight:700">→ Cloud Console</a></div>`
+      :`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#166534">✅ https:// — verbinding mogelijk</div>`}
+    ${stRow('Google Client ID',`Maak aan via <a href="https://console.cloud.google.com" target="_blank" style="color:var(--primary)">Google Cloud Console</a> → OAuth 2.0 → Web App → origin: <b>${location.origin}</b>`,stInput('st-gclient','text',settings.googleClientId||'','12345-abc.apps.googleusercontent.com'))}
+    ${gCalConnected()
+      ?`<div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--success-light);border:1.5px solid var(--success);border-radius:12px">
+          <span style="font-size:20px">✅</span>
+          <div style="flex:1;font-size:13px;font-weight:700;color:var(--success)">Google Agenda verbonden</div>
+          <button onclick="disconnectGoogleCalendar()" style="padding:6px 12px;border:1.5px solid var(--success);border-radius:8px;background:none;color:var(--success);font-size:11px;font-weight:700;cursor:pointer">Ontkoppelen</button>
+        </div>`
+      :`<button onclick="connectGoogleCalendar()" class="btn btn-block" style="background:#4285f4;color:#fff">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right:6px"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Verbind Google Agenda
+        </button>`}`;
+
+  const sReviewAI=`
+    ${stRow('Google Review URL','Wordt meegestuurd in WhatsApp na afgeronde klus',stInput('st-review','url',settings.googleReviewUrl||'','https://g.page/r/...'))}
+    <div style="height:1px;background:var(--border);margin:14px 0"></div>
+    ${stRow('Claude API-sleutel','Voor het scannen van roosters · <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary)">ophalen →</a>',
+      `<input id="st-apikey" type="password" value="${esc(settings.claudeApiKey||'')}" placeholder="sk-ant-api03-..." autocomplete="off"
+        style="width:100%;padding:13px 14px;border:2px solid var(--border);border-radius:12px;font-size:13px;font-weight:600;color:var(--text);background:var(--card);box-sizing:border-box;font-family:monospace"
+        onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'">`)}
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-ghost" style="flex:1" onclick="testClaudeKey()">🔌 Test verbinding</button>
+      <div id="claude-test-result" style="font-size:12px;font-weight:700;flex:1;text-align:center"></div>
+    </div>`;
+
+  const sSync=`
+    ${settings.syncEnabled
+      ?`<div style="background:var(--success-light);border:1.5px solid var(--success);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">🟢</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:800;color:var(--success)">Live sync actief</div>
+            ${settings.lastSync?`<div style="font-size:11px;color:var(--text-muted)">Laatste sync: ${new Date(settings.lastSync).toLocaleString('nl-NL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`:''}
+          </div>
+          <div id="sync-status" style="font-size:11px;font-weight:700"></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" style="flex:1" onclick="copySyncCode()">📋 Link kopiëren</button>
+          <button class="btn btn-danger" style="flex:1" onclick="disableSync()">🔴 Uitschakelen</button>
+        </div>`
+      :`<div style="background:var(--warning-light);border:1.5px solid var(--warning);border-radius:12px;padding:12px;margin-bottom:12px;font-size:12px;color:#92400e;line-height:1.6">
+          ⚠️ Sync staat <b>uit</b>. Schakel in zodat jij en je collega dezelfde data zien.
+        </div>
+        <div id="sync-status" style="font-size:11px;font-weight:700;margin-bottom:8px"></div>
+        <button id="sync-create-btn" class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="createSyncRoom()">🔥 Sync inschakelen</button>
+        <div style="border-top:1px solid var(--border);padding-top:10px">
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Ben je de <b>collega</b>?</div>
+          <button id="sync-join-btn" class="btn btn-outline btn-block" onclick="joinSyncRoom()">🔗 Verbinden als collega</button>
+        </div>`}`;
+
+  const sBackup=`
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">Maak een backup vóór je de app bijwerkt. Je kunt de backup later terugzetten.</div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn btn-primary" style="flex:1" onclick="exportBackup()">⬇️ Backup downloaden</button>
+      <button class="btn btn-outline" style="flex:1" onclick="document.getElementById('backup-import-input').click()">📂 Terugzetten</button>
+    </div>
+    <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(this)">
+    <div style="height:1px;background:var(--border);margin-bottom:14px"></div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;line-height:1.6">
+      <b style="color:var(--text)">App installeren op telefoon:</b><br>
+      Download → stuur via WhatsApp/mail → open in Chrome/Safari → Delen → Zet op beginscherm
+    </div>
+    <button class="btn btn-outline btn-block" onclick="downloadApp()">⬇️ App-bestand downloaden (.html)</button>`;
+
+  // Subtiels voor gesloten sectie-headers
+  const subBedrijf=`${settings.homeAddress||'Adres instellen'} · €${settings.hourlyRate}/uur`;
+  const subMedewerkers=`${settings.w1Name} & ${settings.w2Name}`;
+  const subMeldingen=`Melding om ${settings.morgenNotifTime||'20:00'}`;
+  const subPins='PIN-codes beheren';
+  const subGcal=gCalConnected()?'✅ Verbonden':'Niet verbonden';
+  const subReviewAI=`${settings.googleReviewUrl?'Review link ingesteld':'Geen review link'} · ${settings.claudeApiKey?'AI actief':'Geen AI sleutel'}`;
+  const subSync=settings.syncEnabled?'🟢 Live sync actief':'⚪ Sync uitgeschakeld';
+  const subBackup='Backup & App installeren';
+
+  return`
+    <button class="back-btn" onclick="nav('ai')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>AI Assistent</button>
+
+    ${stSection('bedrijf','🏢','Bedrijf & Tarieven',subBedrijf,sBedrijf)}
+    ${stSection('medewerkers','👷','Medewerkers',subMedewerkers,sMedewerkers)}
+    ${stSection('meldingen','🔔','Meldingen & Notificaties',subMeldingen,sMeldingen)}
+    ${stSection('pins','🔐','PIN-codes',subPins,sPins)}
+    ${stSection('gcal','📅','Google Agenda',subGcal,sGcal)}
+    ${stSection('reviewai','⭐','Reviews & AI',subReviewAI,sReviewAI)}
+    ${stSection('sync','🔥','Live sync met collega',subSync,sSync)}
+    ${stSection('backup','💾','Backup & App',subBackup,sBackup)}`;
 }
 
 function emptyState(icon,title,desc){return`<div class="empty"><div class="empty-icon">${icon}</div><h3>${title}</h3>${desc?`<p>${desc}</p>`:''}</div>`}
