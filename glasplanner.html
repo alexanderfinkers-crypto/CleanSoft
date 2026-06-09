@@ -1017,7 +1017,11 @@ function aiGetPendingCustomers(){
     const done=jobs.filter(j=>j.custId===c.id&&j.status==='afgerond').sort((a,b)=>dateFromStr(b.date)-dateFromStr(a.date));
     let dueDate;
     if(done.length>0){dueDate=new Date(dateFromStr(done[0].date));dueDate.setDate(dueDate.getDate()+days);}
-    else{dueDate=new Date(td);dueDate.setDate(td.getDate()+3);}
+    else{
+      // Geen geschiedenis: gebruik aanmaakdatum als startpunt, anders vandaag + volledige termijn
+      const base=c.created?dateFromStr(c.created.slice(0,10)):td;
+      dueDate=new Date(base);dueDate.setDate(base.getDate()+days);
+    }
     const urgency=Math.round((dueDate-td)/(86400000));
     result.push({cust:c,dueDate,urgency,overdue:urgency<0});
   });
