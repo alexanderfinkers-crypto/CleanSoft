@@ -930,11 +930,12 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
 // ════════════════════════════════════════════════
 //  AI: DATE SUGGESTIONS
 // ════════════════════════════════════════════════
-function aiSuggestDates(custId){
+function aiSuggestDates(custId,fromDate=null){
   const cust=getCust(custId);
   const suggestions=[];
+  const base=fromDate&&fromDate>today()?fromDate:today();
   for(let d=1;d<=MAX_PLAN_DAYS&&suggestions.length<3;d++){
-    const ds=addDays(today(),d);
+    const ds=addDays(base,d);
     const s1=getAvailSlot('w1',ds);
     const s2=getAvailSlot('w2',ds);
     if(!s1.on&&!s2.on)continue;
@@ -1112,7 +1113,9 @@ function aiPlanByWijk(){
     let attempt=0;
     while(remaining.length>0&&attempt<5){
       attempt++;
-      const fromDate=remaining[0].urgency<0?today():remaining[0].dueDate.toISOString().slice(0,10);
+      const _dd=remaining[0].dueDate;
+      const _ddStr=_dd.getFullYear()+'-'+String(_dd.getMonth()+1).padStart(2,'0')+'-'+String(_dd.getDate()).padStart(2,'0');
+      const fromDate=remaining[0].urgency<0?today():_ddStr;
       const best=_findWijkDay(region,fromDate,remaining.length);
       if(!best){break;}
       const chunk=remaining.slice(0,best.slots);
@@ -1128,8 +1131,12 @@ function aiPlanByWijk(){
 }
 
 function _findWijkDay(region,fromDate,needed){
+  const td=today();
+  // Nooit een datum in het verleden of vandaag (al bezig) teruggeven
+  const start=fromDate<td?td:fromDate;
   for(let i=0;i<MAX_PLAN_DAYS;i++){
-    const ds=addDays(fromDate,i);
+    const ds=addDays(start,i);
+    if(ds<td)continue;
     if(!aiIsAvailable(ds))continue;
     const dayJobs=jobs.filter(j=>j.date===ds&&j.status!=='afgerond');
     const slots=settings.maxJobsPerDay-dayJobs.length;
@@ -1145,7 +1152,8 @@ function _findWijkDay(region,fromDate,needed){
   }
   // Fallback: eerste beschikbare dag
   for(let i=0;i<MAX_PLAN_DAYS;i++){
-    const ds=addDays(fromDate,i);
+    const ds=addDays(start,i);
+    if(ds<td)continue;
     if(!aiIsAvailable(ds))continue;
     const slots=settings.maxJobsPerDay-jobs.filter(j=>j.date===ds&&j.status!=='afgerond').length;
     if(slots>0)return{date:ds,slots:Math.min(slots,needed)};
@@ -1508,24 +1516,22 @@ function renderDashboard(rems){
       const w=Math.round(d/7);return'over ~'+w+' weken';
     };
 
-    // AI-suggestie: zoek rond de streefdatum als die beschikbaar is
-    const aiForJob=job=>{
-      if(job.date)return null;
+    // AI-suggesties: meerdere opties rond streefdatum
+    const aiDatesForJob=job=>{
+      if(job.date)return[];
       const sf=job.scheduledFor;
-      if(!sf)return aiFindBestDate(job.custId,td,21);
-      // Zoek in venster: max(vandaag, sf-7) … sf+7
-      const from=addDays(sf,-7)>=td?addDays(sf,-7):td;
-      return aiFindBestDate(job.custId,from,14);
+      const from=sf&&addDays(sf,-7)>=td?addDays(sf,-7):null;
+      return aiSuggestDates(job.custId,from);
     };
 
     const jobRow=(job,needsMyApproval)=>{
       const cc=getCust(job.custId);if(!cc)return'';
-      const aiSug=aiForJob(job);
+      const aiSugs=aiDatesForJob(job);
       const hasSF=!job.date&&job.scheduledFor;
       const dateLabel=job.date?fmtShort(job.date):hasSF?`📅 Datum inplannen (streefdatum: ${fmtShort(job.scheduledFor)})`:' Datum te plannen';
       const dateLabelColor=job.date?'var(--text-muted)':'var(--warning)';
       return`<div onclick="nav('job','${job.id}')" style="cursor:pointer;background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:6px;border:2px solid ${needsMyApproval?'var(--warning)':'var(--border)'}">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${aiSug?'8px':'0'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:${aiSugs.length?'8px':'0'}">
           <div style="flex:1;min-width:0">
             <div style="font-size:14px;font-weight:700">${esc(cc.name)}</div>
             <div style="font-size:11px;color:${dateLabelColor};font-weight:${job.date?'400':'700'}">${dateLabel}</div>
@@ -1538,12 +1544,16 @@ function renderDashboard(rems){
             }
           </div>
         </div>
-        ${aiSug?`<div onclick="event.stopPropagation()" style="background:var(--primary-light);border:1.5px solid var(--primary);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px">
-          <div>
-            <div style="font-size:11px;font-weight:800;color:var(--primary)">🧠 AI stelt voor: ${fmtShort(aiSug.date)}</div>
-            <div style="font-size:10px;color:var(--primary);opacity:.75;margin-top:1px">${aiSug.reason}</div>
+        ${aiSugs.length?`<div onclick="event.stopPropagation()" style="margin-top:6px">
+          <div style="font-size:10px;font-weight:800;color:var(--primary);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">🧠 Kies een datum</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${aiSugs.map((s,i)=>`
+              <button onclick="event.stopPropagation();setJobDate('${job.id}','${s.date}')"
+                style="flex:1;min-width:80px;padding:7px 6px;border-radius:10px;border:2px solid ${i===0?'var(--primary)':'var(--border)'};background:${i===0?'var(--primary)':'var(--card)'};color:${i===0?'#fff':'var(--text)'};font-size:11px;font-weight:800;cursor:pointer;text-align:center;line-height:1.3">
+                <div>${fmtShort(s.date)}</div>
+                <div style="font-size:9px;opacity:.8;font-weight:600;margin-top:1px">${s.reasons[0]||''}</div>
+              </button>`).join('')}
           </div>
-          <button onclick="event.stopPropagation();setJobDate('${job.id}','${aiSug.date}')" style="padding:5px 10px;border:none;border-radius:8px;background:var(--primary);color:#fff;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">Accepteren</button>
         </div>`:''}
       </div>`;
     };
