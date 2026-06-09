@@ -521,7 +521,7 @@ function loadAll(){
   settings={...settings,...(parse('gp_set',{})||{})};
   geocodeCache=parse('gp_geocache',{});
   photos=parse('gp_photos',{});
-  if(!customers.length&&!jobs.length&&!localStorage.getItem('gp_setup'))seedDemo();
+  if(!customers.length&&!jobs.length&&!localStorage.getItem('gp_setup')&&!localStorage.getItem('gp_synced'))seedDemo();
   availability.w1.name=settings.w1Name;
   availability.w2.name=settings.w2Name;
 }
@@ -581,7 +581,7 @@ function seedDemo(){
     if(j.duration)aiModel.durations[key].push(j.duration);
     aiModel.totalDone++;
   });
-  saveAll();
+  saveLocalOnly(); // NOOIT naar cloud pushen vanuit demo-seed
 }
 
 // ════════════════════════════════════════════════
@@ -1450,7 +1450,7 @@ function pinConfirm(){
           settings.syncEnabled=true;
           saveLocalOnly();
           startFirestoreListener();
-          pullFromCloud(true).then(ok=>{if(ok){render();scheduleMorgenNotif();checkConceptApprovalNotify();checkDatePlanningNudge();toast('🔄 Data gesynchroniseerd!');}});
+          pullFromCloud(true,true).then(ok=>{if(ok){render();scheduleMorgenNotif();checkConceptApprovalNotify();checkDatePlanningNudge();toast('🔄 Data gesynchroniseerd!');}});
         }
       }
     };
@@ -3401,6 +3401,7 @@ function renderSettings(){
           </div>
           <div id="sync-status" style="font-size:11px;font-weight:700"></div>
         </div>
+        <button class="btn btn-primary btn-block" style="margin-bottom:8px" onclick="(async()=>{if(!window._fb){toast('⚠️ Firebase niet geladen — check je internetverbinding');return;}toast('☁️ Data ophalen...');const ok=await pullFromCloud(false,true);if(ok){toast('✅ Data bijgewerkt!');}else{toast('⚠️ Niets gevonden in de cloud');}})()">🔄 Forceer sync (haalt alles op)</button>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline" style="flex:1" onclick="copySyncCode()">📋 Link kopiëren</button>
           <button class="btn btn-danger" style="flex:1" onclick="disableSync()">🔴 Uitschakelen</button>
@@ -8512,7 +8513,7 @@ async function pushToCloud(){
   _fbPushing=false;
 }
 
-async function pullFromCloud(silent=false){
+async function pullFromCloud(silent=false,force=false){
   if(!settings.syncEnabled||!window._fb)return false;
   if(!silent)setSyncStatus('☁️ Ophalen...','var(--primary)');
   try{
@@ -8520,7 +8521,7 @@ async function pullFromCloud(silent=false){
     if(!snap.exists()){if(!silent)setSyncStatus('⚠️ Nog geen data in cloud','var(--warning)');return false;}
     const d=snap.data();
     if(!d.customers||!d.jobs)return false;
-    if(d._ts&&d._ts<=(settings.lastSync||0))return false;
+    if(!force&&d._ts&&d._ts<=(settings.lastSync||0))return false;
     _applyCloudData(d);
     if(!silent){setSyncStatus('✅ Bijgewerkt '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');render();}
     return true;
@@ -8530,6 +8531,7 @@ async function pullFromCloud(silent=false){
 function _applyCloudData(d){
   if(!d)return;
   localStorage.setItem('gp_setup','1');
+  localStorage.setItem('gp_synced','1'); // voorkomt dat demo-data ooit de cloud overschrijft
   customers=d.customers||customers;
   jobs=d.jobs||jobs;
   if(d.availability)availability=d.availability;
