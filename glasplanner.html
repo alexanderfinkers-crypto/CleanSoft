@@ -930,11 +930,11 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
 // ════════════════════════════════════════════════
 //  AI: DATE SUGGESTIONS
 // ════════════════════════════════════════════════
-function aiSuggestDates(custId,fromDate=null){
+function aiSuggestDates(custId,fromDate=null,maxDays=MAX_PLAN_DAYS){
   const cust=getCust(custId);
   const suggestions=[];
   const base=fromDate&&fromDate>today()?fromDate:today();
-  for(let d=1;d<=MAX_PLAN_DAYS&&suggestions.length<3;d++){
+  for(let d=1;d<=maxDays&&suggestions.length<3;d++){
     const ds=addDays(base,d);
     const s1=getAvailSlot('w1',ds);
     const s2=getAvailSlot('w2',ds);
@@ -1516,9 +1516,17 @@ function renderDashboard(rems){
       const w=Math.round(d/7);return'over ~'+w+' weken';
     };
 
-    // AI-suggesties: meerdere opties rond streefdatum
+    // AI-suggesties: meerdere opties — respecteer scheduledWeek of scheduledFor
     const aiDatesForJob=job=>{
       if(job.date)return[];
+      // Week-gebaseerd: zoek alleen binnen die specifieke week (ma t/m za)
+      if(job.scheduledWeek){
+        const weekMon=job.scheduledWeek;
+        const weekSat=addDays(weekMon,5);
+        // Start dag vóór de week zodat d=1 op de maandag uitkomt
+        const sugs=aiSuggestDates(job.custId,addDays(weekMon,-1),7);
+        return sugs.filter(s=>s.date>=weekMon&&s.date<=weekSat);
+      }
       const sf=job.scheduledFor;
       const from=sf&&addDays(sf,-7)>=td?addDays(sf,-7):null;
       return aiSuggestDates(job.custId,from);
@@ -1917,12 +1925,33 @@ function renderJobDetail(){
         <div class="info-row"><span class="ir-lbl">Adres</span><a class="ir-val" href="https://maps.google.com/?q=${encodeURIComponent(c.address)}" target="_blank">${esc(c.address)} ↗</a></div>
         ${c.phone?`<div class="info-row"><span class="ir-lbl">Telefoon</span><div style="display:flex;gap:8px;align-items:center"><a class="ir-val" href="tel:${esc(c.phone)}">${esc(c.phone)}</a><a href="https://wa.me/${fmtWaPhone(c.phone)}" target="_blank" style="background:#25d366;color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">WhatsApp</a></div></div>`:''}
         ${c.email?`<div class="info-row"><span class="ir-lbl">E-mail</span><div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1"><a class="ir-val" href="mailto:${esc(c.email)}" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.email)}</a><a href="mailto:${esc(c.email)}" style="flex-shrink:0;background:var(--primary);color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">✉️ Mail</a></div></div>`:''}
-        <div class="info-row"><span class="ir-lbl">Datum</span><span class="ir-val" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          ${job.date?`<span>${fmtLong(job.date)}</span>`
-            :job.scheduledWeek?`<span style="background:var(--primary-light);color:var(--primary);border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700">📅 ${fmtWeek(job.scheduledWeek)}</span>`
-            :`<span style="color:var(--warning);font-weight:700;font-size:12px">In te plannen</span>`}
-          <input type="date" value="${job.date||''}" onchange="setJobDate('${job.id}',this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;max-width:130px" placeholder="Kies datum">
-        </span></div>
+        <div class="info-row"><span class="ir-lbl">Datum</span><div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${!job.date?'8px':'0'}">
+            ${job.date?`<span>${fmtLong(job.date)}</span>`
+              :job.scheduledWeek?`<span style="background:var(--primary-light);color:var(--primary);border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700">📅 ${fmtWeek(job.scheduledWeek)}</span>`
+              :`<span style="color:var(--warning);font-weight:700;font-size:12px">In te plannen</span>`}
+            <input type="date" value="${job.date||''}" ${job.scheduledWeek&&!job.date?`min="${job.scheduledWeek}" max="${addDays(job.scheduledWeek,5)}"`:`min="${today()}"`} onchange="setJobDate('${job.id}',this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;max-width:130px" placeholder="Kies datum">
+          </div>
+          ${(()=>{
+            if(job.date)return'';
+            const _weekMon=job.scheduledWeek;
+            const _sugs=_weekMon
+              ?aiSuggestDates(job.custId,addDays(_weekMon,-1),7).filter(s=>s.date>=_weekMon&&s.date<=addDays(_weekMon,5))
+              :aiSuggestDates(job.custId);
+            if(!_sugs.length)return'';
+            return`<div style="margin-top:4px">
+              <div style="font-size:10px;font-weight:800;color:var(--primary);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px">🧠 AI stelt voor${_weekMon?' (binnen gekozen week)':''}</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                ${_sugs.map((s,i)=>`
+                  <button onclick="setJobDate('${job.id}','${s.date}')"
+                    style="flex:1;min-width:80px;padding:7px 6px;border-radius:10px;border:2px solid ${i===0?'var(--primary)':'var(--border)'};background:${i===0?'var(--primary)':'var(--card)'};color:${i===0?'#fff':'var(--text)'};font-size:11px;font-weight:800;cursor:pointer;text-align:center;line-height:1.3">
+                    <div>${fmtShort(s.date)}</div>
+                    <div style="font-size:9px;opacity:.8;font-weight:600;margin-top:1px">${s.reasons[0]||''}</div>
+                  </button>`).join('')}
+              </div>
+            </div>`;
+          })()}
+        </div></div>
         <div class="info-row"><span class="ir-lbl">Tijd</span><span class="ir-val">${job.time||'—'}</span></div>
         ${isOwner()?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           ${c.prices?.length>1
