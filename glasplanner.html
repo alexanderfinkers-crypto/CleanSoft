@@ -2,6 +2,9 @@
 <html lang="nl">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0066bb">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -426,12 +429,6 @@ a.ir-val{color:var(--primary);text-decoration:none}
 
 <script>
 'use strict';
-// Globale foutopvang — toont fout zichtbaar in de app
-window.onerror=function(msg,src,line,col,err){
-  const m=document.getElementById('main');
-  if(m)m.innerHTML='<div style="padding:20px;background:#fef2f2;border:2px solid #dc2626;border-radius:12px;margin:16px;font-family:monospace"><b style="color:#dc2626;font-size:15px">⚠️ JavaScript fout</b><br><br><b>Fout:</b> '+msg+'<br><b>Regel:</b> '+line+'<br><br><span style="font-size:11px;color:#6b7280">Kopieer dit bericht en stuur het door zodat het opgelost kan worden.</span></div>';
-  return false;
-};
 
 // ════════════════════════════════════════════════
 //  CONSTANTS
@@ -451,6 +448,8 @@ const WORK_TYPES=[
   {id:'stuc',           lbl:'Stuc werk',                  basePrice:6.5, baseMin:60,  icon:'🏗️', perM2:true, priceMin:5,  priceMax:8,  unit:'m²'},
   {id:'gevelbeplating', lbl:'Gevelbeplating',             basePrice:3.5, baseMin:45,  icon:'🪞', perM2:true, priceMin:2,  priceMax:5,  unit:'m²'},
   {id:'schilderwerk',   lbl:'Schilderwerk / Trespa',      basePrice:4.5, baseMin:40,  icon:'🖌️', perM:true,  priceMin:3,  priceMax:6,  unit:'m¹'},
+  // Zonnepanelen — per paneel
+  {id:'zonnepanelen',  lbl:'Zonnepanelen reinigen',       basePrice:4,   baseMin:35,  icon:'⚡', perStuk:true, priceMin:3, priceMax:5, unit:'panelen'},
   // Vaste prijzen — per stuk of vanaf
   {id:'zonwering',      lbl:'Zonneschermen / Markiezen',  basePrice:45,  baseMin:30,  icon:'☀️', priceFrom:30, perStuk:true, pricePerStuk:45},
   {id:'dakkapel',       lbl:'Dakkapel',                   basePrice:65,  baseMin:60,  icon:'🏠', priceFrom:50, perStuk:true, pricePerStuk:65},
@@ -593,7 +592,7 @@ let S={
   weekOffset:0,
   jobId:null,custId:null,
   preCustomer:null,custSearch:'',custRegion:'',custSort:'name',custView:'list',
-  njAiDates:null,njChosenDate:'',njShowManual:false,
+  njAiDates:null,njChosenDate:'',njShowManual:false,njChosenWeek:null,
   aiTab:'hub',aiRouteDate:null,
   priceCalc:{custId:'',work:[],result:null},
 };
@@ -618,6 +617,15 @@ function fmtShort(s){
   return NL_DAYS_S[d.getDay()]+' '+d.getDate()+' '+NL_MONTHS_S[d.getMonth()];
 }
 function fmtLong(s){if(!s)return'';const d=dateFromStr(s);return NL_DAYS[d.getDay()]+' '+d.getDate()+' '+NL_MONTHS[d.getMonth()]+' '+d.getFullYear()}
+function fmtWeek(mondayStr){
+  // Geeft een leesbaar weeklabel voor een maandag-datum
+  const wo=Math.round((dateFromStr(mondayStr)-dateFromStr(weekDays(0)[0]))/(7*24*3600*1000));
+  if(wo===0)return'Deze week';
+  if(wo===1)return'Volgende week';
+  const mon=dateFromStr(mondayStr);
+  const sun=dateFromStr(addDays(mondayStr,6));
+  return NL_MONTHS_S[mon.getMonth()]+' '+mon.getDate()+' – '+sun.getDate();
+}
 function fmtDayHdr(s){
   const d=dateFromStr(s),cap=x=>x[0].toUpperCase()+x.slice(1);
   if(s===today())return'Vandaag — '+cap(NL_DAYS[d.getDay()])+' '+d.getDate()+' '+NL_MONTHS_S[d.getMonth()];
@@ -832,8 +840,10 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
       calcBase+=sub;
     } else if(wt.perStuk){
       const qty=Math.max(1,parseFloat(qtys[wid])||1);
-      const sub=Math.round(qty*wt.pricePerStuk);
-      lineItems.push({icon:wt.icon||'🔧',lbl:`${wt.lbl} — ${qty}× €${wt.pricePerStuk}`,price:sub});
+      const ppu=wt.pricePerStuk||wt.basePrice||0;
+      const sub=Math.round(qty*ppu);
+      const ppuLbl=wt.priceMin&&wt.priceMax?`€${wt.priceMin}–€${wt.priceMax}`:('€'+ppu);
+      lineItems.push({icon:wt.icon||'🔧',lbl:`${wt.lbl} — ${qty} ${wt.unit||'×'} ${ppuLbl}`,price:sub});
       calcBase+=sub;
     } else if(wt.glasswork){
       const mins=Math.max(5,parseFloat(qtys[wid+'_min'])||wt.baseMin);
@@ -1476,7 +1486,7 @@ function renderDashboard(rems){
     const td=today();
 
     // Concept zonder datum: "actief" als scheduledFor binnen 14 dagen OF geen scheduledFor
-    const isActive=j=>j.date||!j.scheduledFor||daysBetween(td,j.scheduledFor)<=14;
+    const isActive=j=>j.date||j.scheduledWeek||!j.scheduledFor||daysBetween(td,j.scheduledFor)<=14;
     const daysUntil=j=>j.scheduledFor?daysBetween(td,j.scheduledFor):0;
 
     const myPending=conceptJobs.filter(j=>!(j.approvals||{})[myKey]);
@@ -1675,7 +1685,7 @@ function renderDashboard(rems){
     // Weeklabel
     const monStr=fmtShort(days[0]);
     const weekLabel=wo===0?'Deze week':wo===1?'Volgende week':'Week van '+monStr;
-    const wj=jobs.filter(j=>days.includes(j.date));
+    const wj=jobs.filter(j=>days.includes(j.date)||(j.scheduledWeek&&j.scheduledWeek===days[0]));
     const rev=wj.reduce((s,j)=>s+getJobRevenue(j),0);
     // Nav header
     h+=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
@@ -1691,7 +1701,7 @@ function renderDashboard(rems){
       const weekChips=[];
       for(let w=0;w<=Math.min(maxWo,26);w++){
         const wd=weekDays(w);
-        const cnt=jobs.filter(j=>wd.includes(j.date)&&j.status!=='afgerond').length;
+        const cnt=jobs.filter(j=>(wd.includes(j.date)||(j.scheduledWeek&&j.scheduledWeek===wd[0]))&&j.status!=='afgerond').length;
         if(cnt>0||w===0||w===wo){
           const mon=dateFromStr(wd[0]);
           const lbl=w===0?'Deze week':w===1?'Volgende week':
@@ -1723,6 +1733,18 @@ function renderDashboard(rems){
         h+=dj.length?dj.map(j=>jobCard(j,warns[j.id]||'')).join(''):`<p style="color:var(--text-muted);font-size:13px;padding:4px 4px 8px">Geen klussen</p>`;
       }
     });
+    // Klussen die voor deze week gepland zijn maar nog geen specifieke datum hebben
+    const weekOnlyJobs=jobs.filter(j=>j.scheduledWeek&&j.scheduledWeek===days[0]&&!j.date);
+    if(weekOnlyJobs.length){
+      h+=`<div style="background:var(--primary-light);border:2px solid var(--primary);border-radius:12px;padding:12px 14px;margin-top:10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <span style="font-size:14px">📅</span>
+          <div style="font-size:12px;font-weight:800;color:var(--primary)">Ingepland voor deze week — datum nog open (${weekOnlyJobs.length})</div>
+        </div>
+        ${weekOnlyJobs.map(j=>jobCard(j,'')).join('')}
+      </div>`;
+      hasAnyDay=true;
+    }
     if(!hasAnyDay){
       h+=`<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
         <div style="font-size:32px;margin-bottom:8px">📭</div>
@@ -1825,6 +1847,7 @@ function jobCard(job,warn=''){
     </div>
     <div class="jc-meta">
       ${job.time?`<span class="jc-time" style="${isNow?'color:#16a34a;font-weight:800':''}">${isNow?'🟢 ':''}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${job.time}</span>`:''}
+      ${job.scheduledWeek&&!job.date?`<span style="font-size:11px;background:var(--primary-light);color:var(--primary);border-radius:6px;padding:2px 7px;font-weight:700">📅 ${fmtWeek(job.scheduledWeek)}</span>`:''}
       ${job.isOfferte?`<span style="font-size:11px;background:#fff7ed;color:#d97706;border:1px solid #fed7aa;border-radius:6px;padding:2px 7px;font-weight:700">📄 Offerte${job.offerteResult==='akkoord'?' ✅':job.offerteResult==='geenakkoord'?' ❌':''}</span>`:''}
       ${warn?`<span style="font-size:11px;background:var(--warning-light);color:var(--warning);border-radius:6px;padding:2px 7px;font-weight:700">${warn}</span>`:''}
     </div>
@@ -1873,14 +1896,19 @@ function renderJobDetail(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
         <div><div style="font-size:20px;font-weight:800">${esc(c.name)}</div>
-        <div style="font-size:13px;color:${job.date?'var(--text-muted)':'var(--warning)'};margin-top:3px;font-weight:${job.date?'400':'700'}">${job.date?fmtLong(job.date):job.scheduledFor?`📅 Datum inplannen — streefdatum ${fmtLong(job.scheduledFor)}`:'📅 Datum nog in te plannen'}</div></div>
+        <div style="font-size:13px;color:${job.date?'var(--text-muted)':job.scheduledWeek?'var(--primary)':'var(--warning)'};margin-top:3px;font-weight:${job.date?'400':'700'}">${job.date?fmtLong(job.date):job.scheduledWeek?`📅 ${fmtWeek(job.scheduledWeek)} — datum nog open`:job.scheduledFor?`📅 Streefdatum ${fmtLong(job.scheduledFor)}`:'📅 Datum nog in te plannen'}</div></div>
         <span class="badge b-${job.status}">${statusIcon(job.status)} ${job.status[0].toUpperCase()+job.status.slice(1)}</span>
       </div>
       <div class="info-rows" style="margin-bottom:0">
         <div class="info-row"><span class="ir-lbl">Adres</span><a class="ir-val" href="https://maps.google.com/?q=${encodeURIComponent(c.address)}" target="_blank">${esc(c.address)} ↗</a></div>
         ${c.phone?`<div class="info-row"><span class="ir-lbl">Telefoon</span><div style="display:flex;gap:8px;align-items:center"><a class="ir-val" href="tel:${esc(c.phone)}">${esc(c.phone)}</a><a href="https://wa.me/${fmtWaPhone(c.phone)}" target="_blank" style="background:#25d366;color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">WhatsApp</a></div></div>`:''}
         ${c.email?`<div class="info-row"><span class="ir-lbl">E-mail</span><div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1"><a class="ir-val" href="mailto:${esc(c.email)}" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.email)}</a><a href="mailto:${esc(c.email)}" style="flex-shrink:0;background:var(--primary);color:#fff;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;text-decoration:none">✉️ Mail</a></div></div>`:''}
-        <div class="info-row"><span class="ir-lbl">Datum</span><span class="ir-val" style="display:flex;align-items:center;gap:8px">${job.date?`<span>${fmtLong(job.date)}</span>`:`<span style="color:var(--warning);font-weight:700;font-size:12px">In te plannen</span>`}<input type="date" value="${job.date||''}" onchange="setJobDate('${job.id}',this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;max-width:130px"></span></div>
+        <div class="info-row"><span class="ir-lbl">Datum</span><span class="ir-val" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${job.date?`<span>${fmtLong(job.date)}</span>`
+            :job.scheduledWeek?`<span style="background:var(--primary-light);color:var(--primary);border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700">📅 ${fmtWeek(job.scheduledWeek)}</span>`
+            :`<span style="color:var(--warning);font-weight:700;font-size:12px">In te plannen</span>`}
+          <input type="date" value="${job.date||''}" onchange="setJobDate('${job.id}',this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;color:var(--text);background:var(--bg);cursor:pointer;max-width:130px" placeholder="Kies datum">
+        </span></div>
         <div class="info-row"><span class="ir-lbl">Tijd</span><span class="ir-val">${job.time||'—'}</span></div>
         ${isOwner()?`<div class="info-row"><span class="ir-lbl">Prijs</span><span class="ir-val" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           ${c.prices?.length>1
@@ -2209,9 +2237,18 @@ function renderNewJob(){
   const w1n=settings.w1Name||'Ik';
   const w2n=settings.w2Name||'Collega';
 
+  // Bepaal slimme begintijd op basis van beschikbaarheid
+  const _njWorker=currentUser?.role==='owner'?'w1':'w2';
+  function njDefaultTime(dateStr){
+    const slot=getAvailSlot(_njWorker,dateStr);
+    const wins=slot.windows||[{from:slot.from||'07:00'}];
+    return wins[0].from||'07:00';
+  }
+
   // Date section
   let dateSection='';
   if(chosenDate){
+    const defTime=njDefaultTime(chosenDate);
     dateSection=`
     <div style="background:var(--success-light);border:2px solid var(--success);border-radius:12px;padding:12px 14px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -2219,8 +2256,26 @@ function renderNewJob(){
         <button onclick="njClearDate()" style="border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:700;cursor:pointer;padding:2px 8px;border-radius:6px;background:rgba(0,0,0,.06)">✕ Wijzig</button>
       </div>
       <div class="grid2" style="gap:8px">
-        <div class="form-group" style="margin-bottom:0"><label class="form-label" style="font-size:11px">Tijd</label><input class="form-control" id="nj-time" type="time" value="09:00"></div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" style="font-size:11px">Begintijd</label>
+          <input class="form-control" id="nj-time" type="time" value="${defTime}">
+        </div>
       </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:6px">⏰ Begintijd ingesteld op je eerste beschikbare moment (${defTime})</div>
+    </div>`;
+  } else if(S.njChosenWeek){
+    // Week is gekozen maar nog geen specifieke datum
+    const wkLabel=fmtWeek(S.njChosenWeek);
+    dateSection=`
+    <div style="background:var(--primary-light);border:2px solid var(--primary);border-radius:12px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:14px;font-weight:800;color:var(--primary)">📅 ${wkLabel}</div>
+        <button onclick="njClearWeek()" style="border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:700;cursor:pointer;padding:2px 8px;border-radius:6px;background:rgba(0,0,0,.06)">✕ Wijzig</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Nog geen specifieke dag — je kunt dit later invullen bij de klus.</div>
+      ${S.njShowManual
+        ?`<input class="form-control" id="nj-manual-date" type="date" min="${today()}" style="margin-bottom:0" placeholder="Kies een dag in de week" onchange="njPickDate(this.value)">`
+        :`<button onclick="S.njShowManual=true;render()" style="width:100%;padding:8px;border:1.5px dashed var(--primary);border-radius:8px;background:none;color:var(--primary);font-size:12px;font-weight:700;cursor:pointer">📅 Toch specifieke datum kiezen →</button>`}
     </div>`;
   } else if(aiDates){
     const cards=aiDates.map((s,i)=>`
@@ -2251,13 +2306,32 @@ function renderNewJob(){
       <button onclick="saveForLater()" style="width:100%;margin-top:8px;padding:10px;border:2px dashed var(--border);border-radius:10px;background:none;color:var(--text-muted);font-size:13px;font-weight:700;cursor:pointer">💾 Later inplannen — datum nu overslaan</button>
     </div>`;
   } else {
+    // Week-chips: de komende 9 weken
+    const _weekChips=[];
+    for(let _w=0;_w<=8;_w++){
+      const _wd=weekDays(_w);
+      const _mon=dateFromStr(_wd[0]);
+      const _lbl=_w===0?'Deze week':_w===1?'Volgende week':NL_MONTHS_S[_mon.getMonth()]+' '+_mon.getDate();
+      _weekChips.push(`<button onclick="njPickWeek('${_wd[0]}')" style="flex-shrink:0;border-radius:20px;padding:5px 14px;font-size:12px;font-weight:700;border:1.5px solid var(--primary);background:var(--card);color:var(--primary);cursor:pointer;white-space:nowrap">${_lbl}</button>`);
+    }
     dateSection=`
     <div style="margin-bottom:12px">
       <button id="nj-ai-date-btn" class="btn btn-lg" onclick="njFetchDates()" style="width:100%;background:linear-gradient(135deg,var(--purple),#4f46e5);color:#fff;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">
         🧠 Beste datum zoeken
       </button>
       <p style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:6px">AI kijkt naar jullie beschikbaarheid en routeplanning</p>
-      <button onclick="saveForLater()" style="width:100%;margin-top:8px;padding:11px;border:2px dashed var(--border);border-radius:10px;background:none;color:var(--text-muted);font-size:13px;font-weight:700;cursor:pointer">💾 Later inplannen — datum nu overslaan</button>
+
+      <div style="display:flex;align-items:center;gap:8px;margin:10px 0">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <span style="font-size:11px;color:var(--text-muted);font-weight:700;white-space:nowrap">OF WEEK INPLANNEN</span>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:4px">
+        <div style="display:flex;gap:6px;width:max-content">${_weekChips.join('')}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:5px">Tik op een week om de klus vast in te plannen — specifieke dag later</div>
+
+      <button onclick="saveForLater()" style="width:100%;margin-top:10px;padding:11px;border:2px dashed var(--border);border-radius:10px;background:none;color:var(--text-muted);font-size:13px;font-weight:700;cursor:pointer">💾 Later inplannen — datum nu overslaan</button>
     </div>`;
   }
 
@@ -2279,19 +2353,19 @@ function renderNewJob(){
     <div class="form-group"><label class="form-label">Werkzaamheden</label>
       <div id="nj-wt">
         ${WORK_TYPES.map(w=>{
-          const hasMeasure=w.perM2||w.perM||w.priceFrom;
+          const hasMeasure=w.perM2||w.perM||w.priceFrom||(w.perStuk&&!w.priceFrom);
           return`<div style="margin-bottom:6px">
             <div class="check-item" data-id="${w.id}" onclick="toggleNew(this);updateAIPrice();toggleMeasureRow('${w.id}')">
               <div class="check-box"></div>
-              <span class="check-label">${w.lbl}${hasMeasure?` <span style="font-size:10px;color:var(--primary);font-weight:700">${w.perM2?'per m²':w.perM?'per m¹':'vanaf €'+w.priceFrom}</span>`:''}</span>
+              <span class="check-label">${w.lbl}${hasMeasure?` <span style="font-size:10px;color:var(--primary);font-weight:700">${w.perM2?'per '+(w.unit||'m²'):w.perM?'per '+(w.unit||'m¹'):w.perStuk&&!w.priceFrom?'per '+(w.unit||'stuk'):'vanaf €'+w.priceFrom}</span>`:''}</span>
             </div>
             ${hasMeasure&&!w.priceFrom?`<div id="mrow-${w.id}" style="display:none;margin-top:4px;padding:8px 10px;background:var(--primary-light);border-radius:8px;border:1px solid var(--primary)">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                 <label style="font-size:12px;font-weight:700;color:var(--primary);flex-shrink:0">Aantal ${w.unit||'m²'}:</label>
-                <input type="number" id="qty-${w.id}" min="1" step="0.5" placeholder="bijv. 25" value=""
+                <input type="number" id="qty-${w.id}" min="1" step="${w.perStuk?1:0.5}" placeholder="${w.perStuk?'bijv. 20':'bijv. 25'}" value=""
                   style="flex:1;min-width:80px;padding:7px 10px;border:2px solid var(--primary);border-radius:8px;font-size:15px;font-weight:700;color:var(--text)"
                   oninput="updateAIPrice()">
-                <button onclick="openDakCalculator('qty-${w.id}',njGetCustAddr())" style="flex-shrink:0;padding:7px 10px;border-radius:8px;border:1.5px solid var(--primary);background:#fff;color:var(--primary);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">📐 Dak</button>
+                ${w.perStuk?'':` <button onclick="openDakCalculator('qty-${w.id}',njGetCustAddr())" style="flex-shrink:0;padding:7px 10px;border-radius:8px;border:1.5px solid var(--primary);background:#fff;color:var(--primary);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">📐 Dak</button>`}
                 <span style="font-size:11px;color:var(--primary);font-weight:600;width:100%">× €${w.priceMin||'?'}–€${w.priceMax||'?'}/${w.unit||'m²'}</span>
               </div>
             </div>`:''}
@@ -2322,6 +2396,7 @@ function renderNewJob(){
     <div class="divider"></div>
     ${dateSection}
     ${chosenDate?`<button class="btn btn-primary btn-lg" style="background:var(--success);border-color:var(--success)" onclick="createJob()">✅ Versturen voor goedkeuring</button>`:''}
+    ${S.njChosenWeek&&!chosenDate?`<button class="btn btn-primary btn-lg" onclick="createJobForWeek()">📅 Aanmelden voor week</button>`:''}
     ${!customers.length?`<p style="text-align:center;color:var(--text-muted);font-size:13px;margin-top:12px">Nog geen klanten? <button class="btn btn-ghost btn-sm" onclick="nav('editcustomer',null)">Toevoegen</button></p>`:''}
   </div>`;
 }
@@ -2342,7 +2417,7 @@ function getWorkQtys(){
   // returns {workId: qty} for all measure-based work types currently selected
   const qtys={};
   WORK_TYPES.forEach(w=>{
-    if(!w.perM2&&!w.perM)return;
+    if(!w.perM2&&!w.perM&&!(w.perStuk&&!w.priceFrom))return;
     const el=document.getElementById('qty-'+w.id);
     if(el&&el.closest('#nj-wt')){
       const item=[...document.querySelectorAll('#nj-wt .check-item')].find(x=>x.dataset.id===w.id);
@@ -2879,7 +2954,7 @@ function renderAIAvailability(){
   const mon=dateFromStr(days[0]);const sun=dateFromStr(days[6]);
   const sameMonth=mon.getMonth()===sun.getMonth();
   const weekLabel=wo===0?'Deze week':wo===1?'Volgende week'
-    :(mon.getDate()+' '+(sameMonth?'':'NL_MONTHS_S[mon.getMonth()]+' ')+' – '+sun.getDate()+' '+['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][sun.getMonth()]);
+    :(mon.getDate()+' '+(sameMonth?'':NL_MONTHS_S[mon.getMonth()]+' ')+' – '+sun.getDate()+' '+['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'][sun.getMonth()]);
 
   // ── Dagbalk-renderer ──────────────────────────────────────────────────────
   function dayBar(wk, ds, editable){
@@ -7441,7 +7516,7 @@ function saveForLater(){
   const manualPrice=parseFloat(document.getElementById('nj-manual-price')?.value)||0;
   const job={id:uid(),custId,date:'',time:'',status:'concept',approvals:{w1:false,w2:false},work,mats,notes,qtys,created:new Date().toISOString(),...(manualPrice>0?{price:manualPrice}:{}),...(S.njIsOfferte?{isOfferte:true}:{})};
   jobs.push(job);saveAll();
-  S.preCustomer=null;S.njAiDates=null;S.njChosenDate='';S.njShowManual=false;S.njIsOfferte=false;
+  S.preCustomer=null;S.njAiDates=null;S.njChosenDate='';S.njShowManual=false;S.njIsOfferte=false;S.njChosenWeek=null;
   toast('💾 Opgeslagen — plan later een datum in');
   nav('job',job.id);
 }
@@ -7520,8 +7595,37 @@ function njFetchDates(){
   render();
 }
 function njPickDate(d){S.njChosenDate=d;S.njAiDates=null;S.njShowManual=false;render();}
-function njClearDate(){S.njChosenDate='';S.njAiDates=null;S.njShowManual=false;render();}
+function njClearDate(){S.njChosenDate='';S.njAiDates=null;S.njShowManual=false;S.njChosenWeek=null;render();}
+function njPickWeek(monday){S.njChosenWeek=monday;S.njAiDates=null;S.njShowManual=false;render();}
+function njClearWeek(){S.njChosenWeek=null;S.njShowManual=false;render();}
 function njToggleManual(){S.njShowManual=true;render();}
+
+function createJobForWeek(){
+  const custId=document.getElementById('nj-cust')?.value;
+  if(!custId){toast('⚠️ Selecteer een klant');return;}
+  if(!S.njChosenWeek){toast('⚠️ Kies eerst een week');return;}
+  const work=[...document.querySelectorAll('#nj-wt .check-item.on')].map(el=>el.dataset.id);
+  const mats=[...document.querySelectorAll('#nj-mat .check-item.on-mat')].map(el=>el.dataset.id);
+  const notes=document.getElementById('nj-notes')?.value||'';
+  const qtys=getWorkQtys();
+  const manualPrice=parseFloat(document.getElementById('nj-manual-price')?.value)||0;
+  let jobPrice=manualPrice;
+  if(!jobPrice){
+    const custForJob=getCust(custId);
+    if(custForJob?.prices?.length) jobPrice=custForJob.prices[0].price||0;
+    else if(custForJob?.price) jobPrice=custForJob.price;
+  }
+  const job={id:uid(),custId,date:'',time:'',status:'concept',approvals:{w1:false,w2:false},
+    work,mats,notes,qtys,created:new Date().toISOString(),
+    scheduledWeek:S.njChosenWeek,
+    ...(jobPrice>0?{price:jobPrice}:{}),
+    ...(S.njIsOfferte?{isOfferte:true}:{})};
+  jobs.push(job);saveAll();
+  S.preCustomer=null;S.njAiDates=null;S.njChosenDate='';S.njShowManual=false;S.njIsOfferte=false;S.njChosenWeek=null;
+  _lastConceptNotifKey='';
+  toast('📅 Aangemeld voor week — plan later de specifieke dag in');
+  S.jobId=job.id;nav('job',job.id);
+}
 
 async function importContact(){
   try{
