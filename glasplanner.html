@@ -8547,9 +8547,43 @@ async function pushToCloud(){
   _fbPushing=true;
   setSyncStatus('☁️ Synchroniseren...','var(--primary)');
   try{
+    // Haal eerst de nieuwste cloudversie op en merge collega-wijzigingen
+    // zodat we ze niet overschrijven met onze push
+    const latestSnap=await window._fb.getDoc(_fbDoc());
+    if(latestSnap.exists()){
+      const latest=latestSnap.data();
+      if(latest._ts&&latest._ts>(settings.lastSync||0)){
+        // Snapshot van lokale staat vóór merge (zodat we niks kwijtraken)
+        const localJobs=[...jobs];
+        const localCustomers=[...customers];
+        // Klanten: cloud als basis + nieuwe lokale klanten die nog niet in cloud staan
+        if(latest.customers){
+          customers=[...latest.customers];
+          localCustomers.filter(lc=>!latest.customers.find(cc=>cc.id===lc.id))
+            .forEach(lc=>customers.push(lc));
+        }
+        // Klussen: cloud als basis, lokale versie wint bij conflict, nieuwe lokale klussen toevoegen
+        if(latest.jobs){
+          jobs=latest.jobs.map(cj=>{
+            const local=localJobs.find(lj=>lj.id===cj.id);
+            return local||cj; // lokale versie wint (recentste wijziging)
+          });
+          localJobs.filter(lj=>!latest.jobs.find(cj=>cj.id===lj.id))
+            .forEach(lj=>jobs.push(lj)); // nieuwe lokale klussen toevoegen
+        }
+        // Beschikbaarheid: per medewerker mergen zodat beiden elkaars wijzigingen bewaren
+        if(latest.availability){
+          availability.w1={...latest.availability.w1,...availability.w1};
+          availability.w2={...latest.availability.w2,...availability.w2};
+        }
+        settings.lastSync=latest._ts;
+        saveLocalOnly();
+      }
+    }
+    const payload=syncPayload();
     _fbIgnoreNext=true;
-    await window._fb.setDoc(_fbDoc(),syncPayload());
-    settings.lastSync=Date.now();
+    await window._fb.setDoc(_fbDoc(),payload);
+    settings.lastSync=payload._ts; // gebruik exact dezelfde _ts als in de payload
     saveLocalOnly();
     setSyncStatus('✅ Gesynchroniseerd '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');
   }catch(e){setSyncStatus('⚠️ Sync mislukt: '+e.message,'var(--danger)');_fbIgnoreNext=false;}
