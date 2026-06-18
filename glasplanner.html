@@ -521,7 +521,7 @@ function loadAll(){
   settings={...settings,...(parse('gp_set',{})||{})};
   geocodeCache=parse('gp_geocache',{});
   photos=parse('gp_photos',{});
-  if(!customers.length&&!jobs.length&&!localStorage.getItem('gp_setup')&&!localStorage.getItem('gp_synced'))seedDemo();
+  if(!customers.length&&!jobs.length)_initCleanSoftData();
   availability.w1.name=settings.w1Name;
   availability.w2.name=settings.w2Name;
 }
@@ -545,6 +545,64 @@ function saveAll(){
   }
 }
 
+function _initCleanSoftData(){
+  localStorage.setItem('gp_setup','1');
+  localStorage.setItem('gp_synced','1');
+  customers=[
+    {id:"mp1ndnewiinnb",name:"Tekin Gönen",phone:"",address:"Springerstraat, Almelo",price:75,frequency:"none",notes:"Gevraagd: Glasbewassing voorkant en achterkant huis, veranda met glazen schuifwanden en polycarbonaat opaal dak.",created:"2026-05-11T20:21:42.728Z"},
+    {id:"mp2cb1id3i7q8",name:"Jane",phone:"",address:"Admiraal de Ruyterweg 4, Wierden",price:45,frequency:"12w",notes:"Gevraagd: Ramen wassen (voor- en achterzijde woning, zijraam zolder, zijraam woonkamer, keukenraam aanbouw) 1x per 3 maanden.\nKlant vertegenwoordigt groep buren.",created:"2026-05-12T07:59:31.429Z"},
+    {id:"mp41x765shk77",name:"Fleur",phone:"+31 6 20005918",address:"keteldiepstraat 30 Almelo",price:30,frequency:"none",notes:"",created:"2026-05-13T12:44:21.773Z"},
+    {id:"mp429dyshfd6w",name:"Paula",phone:"+31 6 28801439",address:"Herinckhave 1 7608 BG",price:45,frequency:"none",notes:"",created:"2026-05-13T12:53:50.452Z"},
+    {id:"mp42gsynpbu80",name:"Jan Span",phone:"+31 6 14287200",address:"Meijerinksberg 10 Wierden 7641RZ",price:55,frequency:"none",notes:"Alleen boven ramen/kozijnen",created:"2026-05-13T12:59:36.479Z"},
+    {id:"mp42mjpdggs9v",name:"José Oltmans",phone:"+31 6 30380059",address:"Jura, Almelo",price:55,frequency:"none",notes:"Geen autowassen, je hoeft de waterkraan niet open te doen als je water uit de kraan wil",created:"2026-05-13T13:04:04.417Z"},
+    {id:"mp42qeifdzvka",name:"Wim Wijnveen",phone:"+31 6 10520178",address:"Meijerinksberg 12, 7641 RZ Wierden",price:55,frequency:"none",notes:"Prijs weet ik niet meer zeker",created:"2026-05-13T13:07:04.311Z"},
+    {id:"mp42unot5q6if",name:"Truus Overgoor",phone:"+31 6 55429749",address:"Oude Almeloseweg 17, 7642 GK Wierden",price:30,prices:[{price:30,lbl:"Glasbewassing geheel",id:"mpbeelpvudkyo"}],frequency:"none",notes:"Zonnepanelen niet bij prijs in",created:"2026-05-13T13:10:22.829Z"},
+    {id:"mp6x5omhc4m83",name:"Marlies Nitert",phone:"+31 6 11608123",address:"Appelhofstraat 19 7641 CA Wierden",price:55,prices:[{lbl:"Glasbewassing geheel",price:55,id:"mp72hxwje92gm"},{id:"mp72i4bh0kx5c",price:75,lbl:"Glasbewassing en boeidelen"}],frequency:"none",notes:"Let op 2 dakramen!",created:"2026-05-15T12:54:18.089Z"},
+    {id:"mpcqumd0b59i8",name:"Nadia",phone:"",email:"nburggraaff@gmail.com",address:"De ijsduiker 1 almelo",price:0,prices:[],frequency:"12w",notes:"nburggraaff@gmail.com\nPoort open.\n25,-",created:"2026-05-19T14:44:21.300Z"},
+    {id:"mpe1mmfnejpg3",name:"Vader Sandra",phone:"",email:"",address:"Enter",price:0,prices:[],frequency:"none",notes:"",created:"2026-05-20T12:33:50.099Z"},
+    {id:"mpe1rxsoas989",name:"Roos-Anne Wassink",phone:"+31 6 25360665",email:"",address:"Lampertheimstraat 21 wierden",price:35,prices:[{price:35,lbl:"Glasbewassing beneden",id:"mpe1pvalgbqfz"},{price:50,lbl:"Glasbewassing geheel",id:"mpe1qa3bcts1i"},{id:"mpe1ql701l3vj",lbl:"Glas, houtwerk geheel",price:110}],frequency:"8w",notes:"",created:"2026-05-20T12:37:58.474Z"},
+    {id:"mpe1v0g2nnz1t",name:"Marhilde",phone:"+31 6 30004900",email:"",address:"Waterspoor 3, Zuidbroek Wierden",price:0,prices:[],frequency:"none",notes:"",created:"2026-05-20T12:40:21.506Z"},
+    {id:"mpe1z0e941vri",name:"Ans Geurtse",phone:"+31 6 37238727",email:"",address:"Meijerinksberg",price:55,prices:[{id:"mpe1ys7la49n5",lbl:"Glas geheel",price:55}],frequency:"8w",notes:"",created:"2026-05-20T12:43:28.065Z"},
+    {id:"mpqqsspuhbemt",name:"Ernst Jan Dasselaar",phone:"",email:"",address:"Hexelseweg 115, hoge hexel",price:0,prices:[],frequency:"none",notes:"",created:"2026-05-29T09:51:42.690Z"},
+    {id:"mq6kwozk8h0ky",name:"Nicole",phone:"31 6 50434424",email:"",address:"Het bolkshuis 9 almelo",price:100,prices:[{lbl:"glasbewassing, boeien, houtwerk, zonnepanelen",price:100,id:"mq6kwbsko852v"}],frequency:"none",notes:"",created:"2026-06-09T11:51:05.600Z"},
+    {id:"mq6kztwmm8w5m",name:"Dick Schipper",phone:"31 6 20477005",email:"",address:"lage eggeweg 5a Wierden",price:75,prices:[{id:"mq6kyvtqhgy8l",lbl:"ramen/kozijnen gehele huis",price:75},{lbl:"ramen/koijnen/boeidelen,hout",price:115,id:"mq6kz24whqbn6"}],frequency:"none",notes:"",created:"2026-06-09T11:53:31.942Z"},
+    {id:"mq6l180es5rls",name:"Roy Finkers",phone:"31 6 46280303",email:"",address:"Sniederhof 13 Almelo",price:0,prices:[],frequency:"none",notes:"",created:"2026-06-09T11:54:36.878Z"},
+    {id:"mq6l3667r1sui",name:"Bertine Hegeman",phone:"31 6 45953626",email:"",address:"Almelosestraat 42, Wierden",price:70,prices:[{id:"mq6l29eftxahc",price:70,lbl:"Glasbewassing beneden"},{id:"mq6l2ngzw0g0l",lbl:"Glasbewassing geheel inclusief houtwerk",price:120}],frequency:"none",notes:"",created:"2026-06-09T11:56:07.807Z"},
+    {id:"mq6l5ovmppa8c",name:"Gerard ten Hoopen",phone:"31 6 51083866",email:"",address:"Meijerinksberg 27 Wierden",price:0,prices:[],frequency:"none",notes:"",created:"2026-06-09T11:58:05.362Z"},
+    {id:"mqhr4zhi650m2",name:"Erik Van Kammen",phone:"+31 6 22893463",email:"",address:"",price:0,prices:[],frequency:"none",notes:"",created:"2026-06-17T07:30:58.086Z"},
+    {id:"mqhr786amfdav",name:"Gerrit-Jan Altena",phone:"31 6 11015762",email:"",address:"",price:0,prices:[],frequency:"none",notes:"",created:"2026-06-17T07:32:42.686Z"},
+    {id:"mqhr82ysoso6l",name:"Paul Van Iersel",phone:"+31636173855",email:"",address:"",price:0,prices:[],frequency:"none",notes:"",created:"2026-06-17T07:33:22.564Z"}
+  ];
+  jobs=[
+    {id:"mp3w9nplpoqtm",custId:"mp2cb1id3i7q8",date:"2026-05-16",time:"08:30",status:"afgerond",work:["glasgeheel"],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T10:06:05.385Z"},
+    {id:"mp41yl10l4axe",custId:"mp41x765shk77",date:"2026-05-13",time:"16:00",status:"afgerond",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T12:45:26.388Z"},
+    {id:"mp42aqek0eaq4",custId:"mp429dyshfd6w",date:"2026-05-28",time:"16:00",status:"gepland",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T12:54:53.228Z"},
+    {id:"mp42jiszuo4tn",custId:"mp42gsynpbu80",date:"2026-05-27",time:"15:00",status:"gepland",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T13:01:43.283Z"},
+    {id:"mp42n2imhdowg",custId:"mp42mjpdggs9v",date:"2026-05-27",time:"17:30",status:"gepland",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T13:04:28.798Z"},
+    {id:"mp42rukh13pl3",custId:"mp42qeifdzvka",date:"2026-05-15",time:"10:00",status:"afgerond",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T13:08:11.778Z"},
+    {id:"mp42v6sj8xnlw",custId:"mp42unot5q6if",date:"2026-05-28",time:"",status:"gepland",work:[],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:true},created:"2026-05-13T13:10:47.578Z"},
+    {id:"mp85y11fnxbo2",custId:"mp2cb1id3i7q8",date:"2026-08-07",time:"08:30",status:"gepland",work:["glasgeheel"],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-29T09:50:21.029Z",created:"2026-05-16T09:48:03.651Z"},
+    {id:"mpcqxnpm5j1et",custId:"mpcqumd0b59i8",date:"2026-05-28",time:"09:00",status:"gepland",work:["glasgeheel"],mats:[],price:25,notes:"poort open.\n",approvals:{w1:true,w2:true},approvedAt:"2026-05-19T21:05:43.177Z",created:"2026-05-19T14:46:43.018Z"},
+    {id:"mpe1n76qozmxq",custId:"mpe1mmfnejpg3",date:"2026-05-23",time:"09:00",status:"gepland",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-29T09:50:29.518Z",created:"2026-05-20T12:34:16.994Z"},
+    {id:"mpe1spadrr6v0",custId:"mpe1rxsoas989",date:"2026-05-21",time:"09:00",status:"gepland",work:[],mats:[],price:35,notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-20T12:46:16.313Z",created:"2026-05-20T12:38:33.733Z"},
+    {id:"mpe1vywoegx9f",custId:"mpe1v0g2nnz1t",date:"2026-05-21",time:"09:00",status:"gepland",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-20T12:46:15.675Z",created:"2026-05-20T12:41:06.168Z"},
+    {id:"mpe1xvaiwaqnv",custId:"mp6x5omhc4m83",date:"2026-05-21",time:"09:00",status:"afgerond",work:[],mats:[],price:55,notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-20T12:46:15.067Z",created:"2026-05-20T12:42:34.794Z"},
+    {id:"mpe1zdff9sz48",custId:"mpe1z0e941vri",date:"2026-05-21",time:"09:00",status:"gepland",work:[],mats:[],price:55,notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-05-20T12:43:46.313Z",created:"2026-05-20T12:43:44.955Z"},
+    {id:"mpuwfxtf37nl3",custId:"mpqqsspuhbemt",date:"2026-06-02",time:"09:00",status:"afgerond",work:[],mats:[],notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-01T17:01:51.560Z",created:"2026-06-01T07:40:45.171Z"},
+    {id:"mq6kxk0k803df",custId:"mq6kwozk8h0ky",date:"2026-06-12",time:"",status:"gepland",work:["glasgeheel","schilderwerk","zonnepanelen","dakkapel"],mats:["telescoop","twasser","emmer","ladder"],qtys:{zonnepanelen:16},notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-09T12:22:56.814Z",created:"2026-06-09T11:51:45.812Z"},
+    {id:"mq6l09fx0estg",custId:"mq6kztwmm8w5m",date:"2026-06-12",time:"",status:"gepland",work:["glasgeheel","schilderwerk"],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-09T12:22:58.428Z",created:"2026-06-09T11:53:52.077Z"},
+    {id:"mq6l1diplixu3",custId:"mq6l180es5rls",date:"2026-06-09",time:"",status:"gepland",isOfferte:true,work:[],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-09T12:08:56.509Z",created:"2026-06-09T11:54:44.017Z"},
+    {id:"mq6l3zr7ej277",custId:"mq6l3667r1sui",date:"2026-06-15",time:"",status:"afgerond",work:[],mats:[],qtys:{},price:70,scheduledWeek:"2026-06-22",notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-09T12:22:59.489Z",created:"2026-06-09T11:56:46.147Z"},
+    {id:"mq6l6k7ie64ks",custId:"mq6l5ovmppa8c",date:"2026-06-15",time:"",status:"afgerond",work:["glasboven","schilderwerk"],mats:["telescoop","twasser","emmer","ladder","bescherm"],price:75,notes:"",approvals:{w1:true,w2:true},approvedAt:"2026-06-09T12:23:02.340Z",created:"2026-06-09T11:58:45.966Z"},
+    {id:"mqhr5g1p7r0p5",custId:"mqhr4zhi650m2",date:"2026-06-18",time:"",status:"concept",work:[],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:false},created:"2026-06-17T07:31:19.549Z"},
+    {id:"mqhr7i5tqkbr5",custId:"mqhr786amfdav",date:"",time:"",status:"concept",work:["glasgeheel","schilderwerk"],mats:[],qtys:{},notes:"",approvals:{w1:true,w2:false},created:"2026-06-17T07:32:55.601Z"},
+    {id:"mqhr8cjbc4m37",custId:"mqhr82ysoso6l",date:"",time:"",status:"concept",work:["glasgeheel","zonnepanelen"],mats:["telescoop","twasser","emmer","swmiddel","ladder"],qtys:{},notes:"",approvals:{w1:true,w2:false},created:"2026-06-17T07:33:34.967Z"}
+  ];
+  geocodeCache={...geocodeCache,"Meijerinksberg 10 Wierden 7641RZ":{lat:52.3641481,lng:6.5591958},"Springerstraat, Almelo":{lat:52.3380373,lng:6.6662599},"Het bolkshuis 9 almelo":{lat:52.3493066,lng:6.6842415},"Herinckhave 1 7608 BG":{lat:52.3793151,lng:6.683827},"Jura, Almelo":{lat:52.3514478,lng:6.6841222},"keteldiepstraat 30 Almelo":{lat:52.3519883,lng:6.6740887},"Admiraal de Ruyterweg 4, Wierden":{lat:52.3565219,lng:6.5785043},"De ijsduiker 1 almelo":{lat:52.3367814,lng:6.6463542},"Almelosestraat 42, Wierden":{lat:52.3564503,lng:6.6014623},"Lampertheimstraat 21 wierden":{lat:52.3646005,lng:6.6034327},"Meijerinksberg 27 Wierden":{lat:52.3632014,lng:6.5576732},"Appelhofstraat 19 7641 CA Wierden":{lat:52.3582381,lng:6.5935202},"Meijerinksberg 12, 7641 RZ Wierden":{lat:52.3640031,lng:6.5584138},"Hexelseweg 115, hoge hexel":{lat:52.3998689,lng:6.5615403},"Meijerinksberg":{lat:52.3643801,lng:6.5589873},"Sniederhof 13 Almelo":{lat:52.3725874,lng:6.6871392},"lage eggeweg 5a Wierden":{lat:52.3708774,lng:6.5810781},"Enter":{lat:52.2952203,lng:6.5772427},"Oude Almeloseweg 17, 7642 GK Wierden":{lat:52.3557116,lng:6.6086059}};
+  settings={...settings,homeAddress:"Meijerinksberg 13",w1Name:"Alexander",w2Name:"Luca",w1Phone:"0615835628",w2Phone:"0618306577",dagDoel:250,maxJobsPerDay:5,hourlyRate:45,morgenNotifTime:"20:00"};
+  availability={w1:{name:"Alexander",blocked:{"2026-06-08":[{type:"school",label:"School 11:00–15:45",schoolFrom:"11:00",schoolTo:"15:45",from:"10:15",to:"16:30"}],"2026-06-09":[{type:"school",label:"School 08:30–11:00",schoolFrom:"08:30",schoolTo:"11:00",from:"07:45",to:"11:45"}]},days:{0:{on:false,from:"08:00",to:"13:00"},1:{on:true,from:"07:00",to:"17:00"},2:{on:true,from:"07:00",to:"17:00"},3:{on:true,from:"07:00",to:"17:00"},4:{on:true,from:"07:00",to:"17:00"},5:{on:true,from:"07:00",to:"17:00"},6:{on:false,from:"08:00",to:"13:00"}},exceptions:{"2026-05-11":{on:false,from:"07:00",to:"17:00"},"2026-05-12":{on:false,from:"07:00",to:"17:00"},"2026-05-13":{on:false,from:"07:00",to:"17:00"},"2026-05-14":{on:false,from:"07:00",to:"17:00"},"2026-05-15":{on:false,from:"07:00",to:"17:00"},"2026-05-18":{on:false,from:"07:00",to:"17:00"},"2026-05-19":{on:false,from:"07:00",to:"17:00"},"2026-05-20":{on:false,from:"07:00",to:"17:00"},"2026-05-21":{on:false,from:"07:00",to:"17:00"},"2026-05-22":{on:false,from:"07:00",to:"17:00"},"2026-05-25":{on:false,from:"07:00",to:"17:00"},"2026-05-26":{on:true,from:"07:00",to:"17:00"},"2026-05-27":{on:true,from:"07:00",to:"17:00"},"2026-05-28":{on:true,from:"07:00",to:"17:00"},"2026-05-29":{on:false,from:"07:00",to:"17:00"},"2026-06-08":{on:true,from:"07:00",to:"10:15",windows:[{from:"07:00",to:"10:15"},{from:"16:30",to:"20:00"}]},"2026-06-09":{on:true,from:"11:45",to:"20:00"},"2026-06-10":{on:true,from:"07:00",to:"14:00"},"2026-06-13":{on:true,from:"08:00",to:"13:00"}}},w2:{name:"Luca",blocked:{},days:{0:{on:false,from:"08:00",to:"13:00"},1:{on:true,from:"08:00",to:"17:00"},2:{on:true,from:"08:00",to:"17:00"},3:{on:true,from:"08:00",to:"17:00"},4:{on:true,from:"08:00",to:"17:00"},5:{on:true,from:"08:00",to:"17:00"},6:{on:true,from:"08:00",to:"17:00"}},exceptions:{"2026-05-18":{on:false,from:"08:00",to:"17:00"},"2026-05-19":{on:false,from:"08:00",to:"17:00"},"2026-05-20":{on:false,from:"08:00",to:"17:00"},"2026-05-21":{on:false,from:"08:00",to:"17:00"},"2026-05-25":{on:false,from:"08:00",to:"17:00"},"2026-05-26":{on:false,from:"08:00",to:"17:00"},"2026-05-27":{on:true,from:"08:00",to:"15:00"},"2026-05-29":{on:true,from:"08:00",to:"13:00"},"2026-05-30":{on:true,from:"08:00",to:"13:00"},"2026-05-31":{on:false,from:"08:00",to:"13:00"},"2026-06-05":{on:true,from:"08:00",to:"17:00"},"2026-06-06":{on:true,from:"08:00",to:"17:00"},"2026-06-08":{on:false,from:"08:00",to:"17:00"},"2026-06-09":{on:false,from:"08:00",to:"17:00"},"2026-06-10":{on:false,from:"08:00",to:"17:00"},"2026-06-11":{on:false,from:"08:00",to:"17:00"},"2026-06-12":{on:true,from:"10:00",to:"16:00"},"2026-06-13":{on:true,from:"08:00",to:"11:00"},"2026-06-22":{on:false,from:"08:00",to:"17:00"},"2026-06-23":{on:false,from:"08:00",to:"17:00"},"2026-06-24":{on:false,from:"08:00",to:"17:00"},"2026-06-25":{on:false,from:"08:00",to:"17:00"},"2026-07-01":{on:false,from:"08:00",to:"17:00"},"2026-07-02":{on:true,from:"08:00",to:"17:00"},"2026-07-03":{on:true,from:"08:00",to:"17:00"},"2026-07-04":{on:true,from:"08:00",to:"17:00"}}}};
+  saveLocalOnly();
+}
 function seedDemo(){
   localStorage.setItem('gp_setup','1');
   const c1={id:uid(),name:'Familie Jansen',address:'Hoofdstraat 12, 1011 AA Amsterdam',phone:'020-1234567',price:85,frequency:'4w',notes:'Hond in de tuin, bellen voor binnenkomst'};
@@ -930,8 +988,44 @@ function aiSuggestPricePT(custId,workTypes,date,qtys,levels){
 // ════════════════════════════════════════════════
 //  AI: DATE SUGGESTIONS
 // ════════════════════════════════════════════════
+// Bereken hoeveel extra km een nieuwe klant toevoegt aan de route van een dag
+function _routeImpactKm(custAddr,dayJobs){
+  if(!dayJobs.length)return 0;
+  const coords=getCachedCoords(custAddr);
+  if(!coords)return null; // onbekend
+  // Zoek dichtstbijzijnde klus op die dag
+  let minKm=Infinity;
+  dayJobs.forEach(j=>{
+    const jc=getCust(j.custId);if(!jc)return;
+    const jCoords=getCachedCoords(jc.address);
+    if(!jCoords)return;
+    const km=haversineKm(coords.lat,coords.lng,jCoords.lat,jCoords.lng);
+    if(km<minKm)minKm=km;
+  });
+  return minKm===Infinity?null:Math.round(minKm*10)/10;
+}
+
+// Detecteer terugrijpatroon: dag heeft al klanten in meerdere verre gebieden
+function _hasBacktrackRisk(custAddr,dayJobs){
+  if(dayJobs.length<2)return false;
+  const coords=getCachedCoords(custAddr);
+  if(!coords)return false;
+  // Tel hoeveel bestaande klussen ver weg zijn (>8km)
+  let farCount=0,nearCount=0;
+  dayJobs.forEach(j=>{
+    const jc=getCust(j.custId);if(!jc)return;
+    const jCoords=getCachedCoords(jc.address);
+    if(!jCoords)return;
+    const km=haversineKm(coords.lat,coords.lng,jCoords.lat,jCoords.lng);
+    if(km<=5)nearCount++;else if(km>8)farCount++;
+  });
+  // Risico als er zowel verre als nabije klanten zijn (zigzag)
+  return farCount>=1&&nearCount===0&&dayJobs.length>=2;
+}
+
 function aiSuggestDates(custId,fromDate=null,maxDays=MAX_PLAN_DAYS){
   const cust=getCust(custId);
+  if(cust)triggerGeocodeBackground(cust.address); // zorg dat GPS gecached is
   const suggestions=[];
   const base=fromDate&&fromDate>today()?fromDate:today();
   for(let d=1;d<=maxDays&&suggestions.length<3;d++){
@@ -941,23 +1035,62 @@ function aiSuggestDates(custId,fromDate=null,maxDays=MAX_PLAN_DAYS){
     if(!s1.on&&!s2.on)continue;
     const dayJobs=jobs.filter(j=>j.date===ds&&j.status!=='geannuleerd');
     if(dayJobs.length>=(settings.maxJobsPerDay||5))continue;
+
     let score=60;
     const reasons=[];
+    let kmExtra=null,kmLabel='';
+
+    // ── Beschikbaarheid (30%) ──
     const both=s1.on&&s2.on;
     if(both){score+=30;reasons.push('Beiden beschikbaar');}
     else if(s1.on){score+=10;reasons.push((settings.w1Name||'Ik')+' beschikbaar');}
     else{score+=10;reasons.push((settings.w2Name||'Collega')+' beschikbaar');}
-    if(dayJobs.length===0){score+=20;reasons.push('Dag nog leeg');}
-    else if(dayJobs.length<=2){score+=8;reasons.push(dayJobs.length+' klus al gepland');}
+
+    // ── Bezettingsgraad (30%) ──
+    const bezetting=dayJobs.length/(settings.maxJobsPerDay||5);
+    if(dayJobs.length===0){score+=10;reasons.push('Dag nog leeg');}
+    else if(bezetting<0.5){score+=20;reasons.push(dayJobs.length+' klus gepland');}
+    else if(bezetting<0.8){score+=28;reasons.push(dayJobs.length+' klussen gepland');}
+    else{score+=18;reasons.push('Bijna volle dag');}
+
+    // ── GPS route-analyse (40%) ──
     if(cust&&dayJobs.length>0){
-      const custPC=extractPostcode(cust.address)||0;
-      const nearby=dayJobs.some(j=>{const jc=getCust(j.custId);const jp=extractPostcode(jc?.address||'')||0;return jp&&custPC&&Math.abs(jp-custPC)<300;});
-      if(nearby){score+=15;reasons.push('Andere klanten in de buurt');}
+      kmExtra=_routeImpactKm(cust.address,dayJobs);
+
+      // Buurt-check via GPS
+      const nearbyJobs=dayJobs.filter(j=>{
+        const jc=getCust(j.custId);
+        return jc&&sameRegion(cust.address,jc.address);
+      });
+      const nearbyNames=nearbyJobs.map(j=>{const c=getCust(j.custId);return c?c.name.split(' ')[0]:'';}).filter(Boolean);
+
+      if(nearbyJobs.length>0){
+        score+=40; // grote bonus: zelfde buurt = efficiënte route
+        const zone=custRegionLabel(custRegionCode(cust));
+        reasons.push(`Cluster: ${nearbyNames.slice(0,2).join(', ')} (${zone})`);
+        if(kmExtra!==null&&kmExtra<3){kmLabel=`+${kmExtra}km`;score+=10;}
+      } else if(kmExtra!==null){
+        if(kmExtra<=3){score+=25;kmLabel=`+${kmExtra}km`;reasons.push('Dichtbij bestaande route');}
+        else if(kmExtra<=8){score+=10;kmLabel=`+${kmExtra}km`;reasons.push(`${kmExtra}km omrijden`);}
+        else{score-=15;kmLabel=`+${kmExtra}km`;reasons.push(`⚠️ ${kmExtra}km omrijden`);}
+      }
+
+      // Terugrijstraf: klant veroorzaakt zigzag-route
+      if(_hasBacktrackRisk(cust.address,dayJobs)){
+        score-=25;
+        reasons.push('⚠️ Terugrijrisico — andere wijk');
+      }
+    } else if(cust&&dayJobs.length===0){
+      // Lege dag: micro-zone als context
+      const zone=custRegionLabel(custRegionCode(cust));
+      reasons.push(`Eerste klus — ${zone}`);
     }
-    // prefer earlier in the week
+
+    // ── Dag van de week bonus ──
     const dow=dateFromStr(ds).getDay();
     if(dow>=1&&dow<=4)score+=5;
-    suggestions.push({date:ds,score,reasons,w1:s1.on,w2:s2.on,w1time:s1.from+'–'+s1.to,w2time:s2.from+'–'+s2.to,jobCount:dayJobs.length});
+
+    suggestions.push({date:ds,score,reasons,kmLabel,w1:s1.on,w2:s2.on,w1time:s1.from+'–'+s1.to,w2time:s2.from+'–'+s2.to,jobCount:dayJobs.length,kmExtra});
   }
   suggestions.sort((a,b)=>b.score-a.score);
   return suggestions.slice(0,3);
@@ -1558,7 +1691,7 @@ function renderDashboard(rems){
             ${aiSugs.map((s,i)=>`
               <button onclick="event.stopPropagation();setJobDate('${job.id}','${s.date}')"
                 style="flex:1;min-width:80px;padding:7px 6px;border-radius:10px;border:2px solid ${i===0?'var(--primary)':'var(--border)'};background:${i===0?'var(--primary)':'var(--card)'};color:${i===0?'#fff':'var(--text)'};font-size:11px;font-weight:800;cursor:pointer;text-align:center;line-height:1.3">
-                <div>${fmtShort(s.date)}</div>
+                <div>${fmtShort(s.date)}${s.kmLabel?` <span style="font-size:9px;opacity:.7">${s.kmLabel}</span>`:''}</div>
                 <div style="font-size:9px;opacity:.8;font-weight:600;margin-top:1px">${s.reasons[0]||''}</div>
               </button>`).join('')}
           </div>
@@ -1945,9 +2078,9 @@ function renderJobDetail(){
                 ${_sugs.map((s,i)=>`
                   <button onclick="setJobDate('${job.id}','${s.date}')"
                     style="flex:1;min-width:80px;padding:7px 6px;border-radius:10px;border:2px solid ${i===0?'var(--primary)':'var(--border)'};background:${i===0?'var(--primary)':'var(--card)'};color:${i===0?'#fff':'var(--text)'};font-size:11px;font-weight:800;cursor:pointer;text-align:center;line-height:1.3">
-                    <div>${fmtShort(s.date)}</div>
-                    <div style="font-size:9px;opacity:.8;font-weight:600;margin-top:1px">${s.reasons[0]||''}</div>
-                  </button>`).join('')}
+                    <div>${fmtShort(s.date)}${s.kmLabel?` <span style="font-size:9px;opacity:.7">${s.kmLabel}</span>`:''}</div>
+                    <div style="font-size:9px;opacity:.75;font-weight:600;margin-top:1px">${s.reasons[0]||''}</div>
+                    ${s.reasons[1]?`<div style="font-size:8px;opacity:.6;margin-top:1px">${s.reasons[1]}</div>`:''}</button>`).join('')}
               </div>
             </div>`;
           })()}
@@ -2044,13 +2177,43 @@ function filterCustomers(){
     return true;
   });
 }
+// Micro-zone mapping Twente (postcode → buurt/wijk)
+const MICRO_ZONES={
+  7500:'Enschede Centrum',7501:'Enschede Centrum',7502:'Enschede Centrum',7503:'Enschede West',
+  7504:'Enschede West',7505:'Enschede West',7511:'Enschede Noord',7512:'Enschede Noord',
+  7513:'Enschede Oost',7514:'Enschede Oost',7521:'Enschede Roombeek',7522:'Enschede Roombeek',
+  7523:'Enschede Helmerhoek',7524:'Enschede Helmerhoek',7531:'Enschede Stroinkslanden',
+  7532:'Enschede Stroinkslanden',7534:'Enschede Glanerbrug',7535:'Enschede Boekelo',
+  7536:'Enschede Zuid',7541:'Enschede Noord',7542:'Enschede Noord',7543:'Enschede Noord',
+  7545:'Enschede Oost',7546:'Enschede Oost',7547:'Enschede Oost',
+  7551:'Hengelo Centrum',7552:'Hengelo Centrum',7553:'Hengelo Noord',7554:'Hengelo Noord',
+  7555:'Hengelo Zuid',7556:'Hengelo West',7557:'Hengelo Hasseler Es',7558:'Hengelo Slangenbeek',
+  7559:'Hengelo Beckum',
+  7600:'Almelo Centrum',7601:'Almelo Centrum',7602:'Almelo Centrum',7603:'Almelo Noord',
+  7604:'Almelo Noord',7605:'Almelo West',7606:'Almelo West',7607:'Almelo Windmolenbroek',
+  7608:'Almelo Schelfhorst',7609:'Almelo Aalderinkshoek',
+  7622:'Borne Centrum',7623:'Borne Noord',
+  7641:'Wierden Centrum',7642:'Wierden Zuidbroek',7643:'Wierden Enter',
+  7621:'Borne',7650:'Tubbergen',7665:'Vriezenveen',7670:'Vriezenveen Noord',
+  7671:'Vriezenveen',7680:'Vriezenveen',7690:'Denekamp',7695:'Denekamp',
+  7560:'Oldenzaal Centrum',7561:'Oldenzaal Noord',7562:'Oldenzaal De Thij',
+  7563:'Oldenzaal Zuid-Berghuizen',7564:'Oldenzaal Noord-Berghuizen',
+  7581:'Losser',7582:'Losser',7583:'De Lutte',
+  7591:'Denekamp',7595:'Weerselo',
+};
 function custRegionCode(c){
   const pc=extractPostcode(c.address);
-  return pc?String(Math.floor(pc/100)*100).padStart(4,'0'):'????';
+  if(!pc)return'????';
+  // Micro-zone lookup (exacte match)
+  if(MICRO_ZONES[pc])return String(pc);
+  // Fallback: 100-range
+  return String(Math.floor(pc/100)*100).padStart(4,'0');
 }
 function custRegionLabel(code){
   if(code==='????')return'Onbekend';
-  return code+'–'+(parseInt(code,10)+99);
+  const pc=parseInt(code,10);
+  if(MICRO_ZONES[pc])return MICRO_ZONES[pc];
+  return code+'–'+(pc+99);
 }
 
 function renderCustomers(rems){
@@ -8025,18 +8188,25 @@ function resetApp(){
 }
 
 function downloadApp(){
-  // Fetch the current HTML file and download it
+  const doDownload=(html)=>{
+    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='glasplanner.html';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+    toast('⬇️ App gedownload — stuur het bestand via WhatsApp of mail!');
+  };
+  // Probeer eerst via fetch (werkt bij web-URL); val terug op outerHTML (werkt altijd)
   fetch(location.href)
-    .then(r=>r.text())
-    .then(html=>{
-      const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-      const a=document.createElement('a');
-      a.href=URL.createObjectURL(blob);
-      a.download='glasplanner.html';
-      a.click();
-      toast('⬇️ App gedownload — stuur het bestand via WhatsApp of mail!');
-    })
-    .catch(()=>toast('⚠️ Download mislukt — kopieer glasplanner.html handmatig'));
+    .then(r=>{if(!r.ok)throw new Error();return r.text();})
+    .then(html=>doDownload(html))
+    .catch(()=>{
+      // Fallback: gebruik huidige DOM-inhoud (werkt ook bij file://)
+      const html='<!DOCTYPE html>\n'+document.documentElement.outerHTML;
+      doDownload(html);
+    });
 }
 
 function exportBackup(){
@@ -8700,13 +8870,7 @@ window.addEventListener('fb-ready',()=>{
   settings.syncEnabled=true;
   saveLocalOnly();
   startFirestoreListener();
-  pullFromCloud(true).then(ok=>{
-    if(ok){render();}
-    else if(customers.length>0||jobs.length>0){
-      // Cloud is leeg maar we hebben lokale data — push direct zodat collega het kan zien
-      pushToCloud();
-    }
-  });
+  pullFromCloud(true).then(ok=>{if(ok)render();});
 });
 
 // ════════════════════════════════════════════════
