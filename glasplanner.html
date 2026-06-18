@@ -541,7 +541,7 @@ function saveAll(){
   saveLocalOnly();
   if(settings.syncEnabled){
     clearTimeout(_syncDebounce);
-    _syncDebounce=setTimeout(pushToCloud,2000);
+    _syncDebounce=setTimeout(pushToCloud,500);
   }
 }
 
@@ -3445,6 +3445,7 @@ function renderSettings(){
           <div id="sync-status" style="font-size:11px;font-weight:700"></div>
         </div>
         <button class="btn btn-primary btn-block" style="margin-bottom:8px" onclick="(async()=>{if(!window._fb){toast('⚠️ Firebase niet geladen — check je internetverbinding');return;}toast('☁️ Data ophalen...');const ok=await pullFromCloud(false,true);if(ok){toast('✅ Data bijgewerkt!');}else{toast('⚠️ Niets gevonden in de cloud');}})()">🔄 Forceer sync (haalt alles op)</button>
+        <button class="btn btn-success btn-block" style="margin-bottom:8px" onclick="(async()=>{if(!window._fb){toast('⚠️ Firebase niet geladen — check je internetverbinding');return;}toast('📤 Data uploaden naar cloud...');try{const payload=syncPayload();_fbIgnoreNext=true;await window._fb.setDoc(window._fb.doc(window._fb.db,'workspace','main'),payload);settings.lastSync=payload._ts;saveLocalOnly();toast('✅ Data succesvol geüpload! ('+customers.length+' klanten, '+jobs.length+' klussen)');}catch(e){toast('⚠️ Upload mislukt: '+e.message);}})()">📤 Lokale data uploaden naar cloud</button>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline" style="flex:1" onclick="copySyncCode()">📋 Link kopiëren</button>
           <button class="btn btn-danger" style="flex:1" onclick="disableSync()">🔴 Uitschakelen</button>
@@ -8519,11 +8520,11 @@ function removeRoosterBlock(worker, date, idx){
 }
 
 // ════════════════════════════════════════════════
-//  CLOUD SYNC — Firebase Firestore (live, realtime)
+//  CLOUD SYNC — Firebase Firestore (realtime, Google Docs-stijl)
 // ════════════════════════════════════════════════
-let _fbUnsub=null; // onSnapshot unsubscribe handle
+let _fbUnsub=null;
 let _fbPushing=false;
-let _fbIgnoreNext=false; // skip our own write bouncing back
+let _myLastPushTs=0; // timestamp van onze eigen laatste push — zodat we die niet terugkrijgen
 
 function syncPayload(){
   const {ownerPin,workerPin,syncId,syncEnabled,lastSync,...rest}=settings;
@@ -8540,6 +8541,21 @@ function _fbDoc(){
   return window._fb.doc(window._fb.db,'workspace','main');
 }
 
+// Merge twee arrays op id — lokale versie wint bij conflict, alles blijft behouden
+function _mergeById(cloud,local){
+  if(!cloud)return local;
+  const result=[...cloud];
+  const cloudIds=new Set(cloud.map(x=>x.id));
+  // Lokale versie wint bij conflict (recentste wijziging)
+  cloud.forEach((item,i)=>{
+    const localItem=local.find(l=>l.id===item.id);
+    if(localItem)result[i]=localItem;
+  });
+  // Lokale items die niet in cloud staan toevoegen
+  local.filter(l=>!cloudIds.has(l.id)).forEach(l=>result.push(l));
+  return result;
+}
+
 async function pushToCloud(){
   if(!settings.syncEnabled)return;
   if(!window._fb){setSyncStatus('⚠️ Firebase niet geladen','var(--warning)');return;}
@@ -8547,31 +8563,15 @@ async function pushToCloud(){
   _fbPushing=true;
   setSyncStatus('☁️ Synchroniseren...','var(--primary)');
   try{
-    // Haal eerst de nieuwste cloudversie op en merge collega-wijzigingen
-    // zodat we ze niet overschrijven met onze push
+    // Haal eerst de nieuwste cloudversie op en merge zodat we collega-data nooit overschrijven
     const latestSnap=await window._fb.getDoc(_fbDoc());
     if(latestSnap.exists()){
       const latest=latestSnap.data();
       if(latest._ts&&latest._ts>(settings.lastSync||0)){
-        // Snapshot van lokale staat vóór merge (zodat we niks kwijtraken)
         const localJobs=[...jobs];
         const localCustomers=[...customers];
-        // Klanten: cloud als basis + nieuwe lokale klanten die nog niet in cloud staan
-        if(latest.customers){
-          customers=[...latest.customers];
-          localCustomers.filter(lc=>!latest.customers.find(cc=>cc.id===lc.id))
-            .forEach(lc=>customers.push(lc));
-        }
-        // Klussen: cloud als basis, lokale versie wint bij conflict, nieuwe lokale klussen toevoegen
-        if(latest.jobs){
-          jobs=latest.jobs.map(cj=>{
-            const local=localJobs.find(lj=>lj.id===cj.id);
-            return local||cj; // lokale versie wint (recentste wijziging)
-          });
-          localJobs.filter(lj=>!latest.jobs.find(cj=>cj.id===lj.id))
-            .forEach(lj=>jobs.push(lj)); // nieuwe lokale klussen toevoegen
-        }
-        // Beschikbaarheid: per medewerker mergen zodat beiden elkaars wijzigingen bewaren
+        customers=_mergeById(latest.customers,localCustomers);
+        jobs=_mergeById(latest.jobs,localJobs);
         if(latest.availability){
           availability.w1={...latest.availability.w1,...availability.w1};
           availability.w2={...latest.availability.w2,...availability.w2};
@@ -8581,12 +8581,12 @@ async function pushToCloud(){
       }
     }
     const payload=syncPayload();
-    _fbIgnoreNext=true;
+    _myLastPushTs=payload._ts; // sla onze eigen timestamp op zodat we die overslaan in onSnapshot
     await window._fb.setDoc(_fbDoc(),payload);
-    settings.lastSync=payload._ts; // gebruik exact dezelfde _ts als in de payload
+    settings.lastSync=payload._ts;
     saveLocalOnly();
-    setSyncStatus('✅ Gesynchroniseerd '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');
-  }catch(e){setSyncStatus('⚠️ Sync mislukt: '+e.message,'var(--danger)');_fbIgnoreNext=false;}
+    setSyncStatus('✅ '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');
+  }catch(e){setSyncStatus('⚠️ Sync mislukt: '+e.message,'var(--danger)');}
   _fbPushing=false;
 }
 
@@ -8600,7 +8600,7 @@ async function pullFromCloud(silent=false,force=false){
     if(!d.customers||!d.jobs)return false;
     if(!force&&d._ts&&d._ts<=(settings.lastSync||0))return false;
     _applyCloudData(d);
-    if(!silent){setSyncStatus('✅ Bijgewerkt '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');render();}
+    if(!silent){setSyncStatus('✅ '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--success)');render();}
     return true;
   }catch(e){if(!silent)setSyncStatus('⚠️ Geen verbinding','var(--warning)');return false;}
 }
@@ -8608,9 +8608,10 @@ async function pullFromCloud(silent=false,force=false){
 function _applyCloudData(d){
   if(!d)return;
   localStorage.setItem('gp_setup','1');
-  localStorage.setItem('gp_synced','1'); // voorkomt dat demo-data ooit de cloud overschrijft
-  customers=d.customers||customers;
-  jobs=d.jobs||jobs;
+  localStorage.setItem('gp_synced','1');
+  // Merge in plaats van vervangen — lokale items die nog niet in cloud staan blijven behouden
+  customers=_mergeById(d.customers,customers);
+  jobs=_mergeById(d.jobs,jobs);
   if(d.availability)availability=d.availability;
   if(d.aiModel)aiModel=d.aiModel;
   if(d.geocodeCache)geocodeCache=d.geocodeCache;
@@ -8626,15 +8627,21 @@ function startFirestoreListener(){
   if(!ref)return;
   _fbUnsub=window._fb.onSnapshot(ref,(snap)=>{
     if(!snap.exists())return;
-    if(_fbIgnoreNext){_fbIgnoreNext=false;return;}
     const d=snap.data();
     if(!d.customers||!d.jobs)return;
+    // Skip als dit onze eigen push is (via timestamp, niet boolean vlag)
+    if(d._ts&&d._ts===_myLastPushTs)return;
+    // Skip als we dit al hebben verwerkt
     if(d._ts&&d._ts<=(settings.lastSync||0))return;
     _applyCloudData(d);
-    setSyncStatus('🔄 Live update '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--teal)');
+    setSyncStatus('🔄 '+new Date().toLocaleTimeString('nl-NL',{hour:'2-digit',minute:'2-digit'}),'var(--teal)');
     render();
-    toast('🔄 Data bijgewerkt door collega');
-  },(err)=>{setSyncStatus('⚠️ Live sync fout','var(--danger)');});
+    toast('🔄 Update ontvangen van collega');
+  },(err)=>{
+    setSyncStatus('⚠️ Live sync fout — herverbinden...','var(--danger)');
+    // Herverbinden na 5 seconden
+    setTimeout(()=>startFirestoreListener(),5000);
+  });
 }
 
 async function createSyncRoom(){
@@ -8693,7 +8700,13 @@ window.addEventListener('fb-ready',()=>{
   settings.syncEnabled=true;
   saveLocalOnly();
   startFirestoreListener();
-  pullFromCloud(true).then(ok=>{if(ok)render();});
+  pullFromCloud(true).then(ok=>{
+    if(ok){render();}
+    else if(customers.length>0||jobs.length>0){
+      // Cloud is leeg maar we hebben lokale data — push direct zodat collega het kan zien
+      pushToCloud();
+    }
+  });
 });
 
 // ════════════════════════════════════════════════
