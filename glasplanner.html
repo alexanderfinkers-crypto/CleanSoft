@@ -8713,18 +8713,24 @@ function _fbDoc(){
 }
 
 // Merge twee arrays op id — lokale versie wint bij conflict, alles blijft behouden
+// Voor het PUSHEN naar cloud: lokale versie wint bij conflict (wij hebben de recentste wijziging)
 function _mergeById(cloud,local){
   if(!cloud)return local;
   const result=[...cloud];
   const cloudIds=new Set(cloud.map(x=>x.id));
-  // Lokale versie wint bij conflict (recentste wijziging)
   cloud.forEach((item,i)=>{
     const localItem=local.find(l=>l.id===item.id);
     if(localItem)result[i]=localItem;
   });
-  // Lokale items die niet in cloud staan toevoegen
   local.filter(l=>!cloudIds.has(l.id)).forEach(l=>result.push(l));
   return result;
+}
+// Voor het ONTVANGEN van cloud-data: cloud-versie wint bij conflict (cloud is altijd de nieuwste push)
+function _mergeCloudWins(cloud,local){
+  if(!cloud)return local;
+  const cloudIds=new Set(cloud.map(x=>x.id));
+  // Cloud-items altijd gebruiken, lokale items die nog niet in cloud staan toevoegen
+  return [...cloud,...local.filter(l=>!cloudIds.has(l.id))];
 }
 
 async function pushToCloud(){
@@ -8780,9 +8786,9 @@ function _applyCloudData(d){
   if(!d)return;
   localStorage.setItem('gp_setup','1');
   localStorage.setItem('gp_synced','1');
-  // Merge in plaats van vervangen — lokale items die nog niet in cloud staan blijven behouden
-  customers=_mergeById(d.customers,customers);
-  jobs=_mergeById(d.jobs,jobs);
+  // Cloud-versie wint bij conflict — lokale items die nog niet in cloud staan blijven behouden
+  customers=_mergeCloudWins(d.customers,customers);
+  jobs=_mergeCloudWins(d.jobs,jobs);
   if(d.availability)availability=d.availability;
   if(d.aiModel)aiModel=d.aiModel;
   if(d.geocodeCache)geocodeCache=d.geocodeCache;
